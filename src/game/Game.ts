@@ -110,6 +110,7 @@ export class Game {
     this.killCam = new XRayKillCam(scene, this.rig, time, this.projectile);
     this.hud = new HUD(
       () => this.requestCannon(),
+      () => this.requestIdle(),
       () => this.requestReset(),
     );
 
@@ -331,6 +332,13 @@ export class Game {
     }
   }
 
+  /** 관람 → 처음 화면(IDLE). 부서진 건물은 그대로 두고 대포만 다시 땅속으로 */
+  private requestIdle(): void {
+    if (!this.fsm.is(GameState.SPECTATE)) return;
+    this.cannon.lower();
+    this.fsm.transition(GameState.IDLE);
+  }
+
   private requestReset(): void {
     if (!this.fsm.is(GameState.SPECTATE)) return;
     this.fsm.transition(GameState.IDLE);
@@ -436,6 +444,8 @@ export class Game {
         this.requestCannon();
       } else if (e.code === 'KeyR') {
         this.requestReset();
+      } else if (e.code === 'Escape') {
+        this.requestIdle();
       }
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));

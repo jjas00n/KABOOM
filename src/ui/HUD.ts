@@ -7,7 +7,7 @@ const HINTS: Record<GameState, string> = {
   [GameState.AIMING]: 'Drag / WASD: aim · Wheel / Q E: power · Space / Click: FIRE',
   [GameState.PROJECTILE_CAM]: '',
   [GameState.IMPACT]: '',
-  [GameState.SPECTATE]: 'Drag: look around · C: cannon · R: reset',
+  [GameState.SPECTATE]: 'Drag: look around · C: cannon · Esc: back · R: reset',
 };
 
 export class HUD {
@@ -19,8 +19,10 @@ export class HUD {
   private readonly powerLabel = document.createElement('div');
   private readonly cannonButton = document.createElement('button');
   private readonly resetButton = document.createElement('button');
+  private readonly backButton = document.createElement('button');
 
-  constructor(onCannon: () => void, onReset: () => void) {
+  /** onBack: 부서진 건물 그대로 처음 화면(IDLE)으로, onReset: 건물을 새로 만들고 IDLE로 */
+  constructor(onCannon: () => void, onBack: () => void, onReset: () => void) {
     this.root.className = 'hud';
     this.hint.className = 'hud-hint';
     this.crosshair.className = 'hud-crosshair';
@@ -38,9 +40,12 @@ export class HUD {
     this.cannonButton.className = 'hud-button hud-button-primary';
     this.resetButton.textContent = 'Reset';
     this.resetButton.className = 'hud-button';
+    this.backButton.textContent = 'Back';
+    this.backButton.className = 'hud-button';
     // 버튼 클릭이 캔버스 클릭(발사·스킵)으로 새지 않게
     for (const [button, action] of [
       [this.cannonButton, onCannon],
+      [this.backButton, onBack],
       [this.resetButton, onReset],
     ] as const) {
       button.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -50,7 +55,7 @@ export class HUD {
         action();
       });
     }
-    buttons.append(this.cannonButton, this.resetButton);
+    buttons.append(this.cannonButton, this.backButton, this.resetButton);
 
     this.root.append(this.crosshair, this.power, this.hint, buttons);
     document.body.append(this.root);
@@ -66,6 +71,7 @@ export class HUD {
     this.cannonButton.hidden = !(state === GameState.IDLE || state === GameState.SPECTATE);
     this.cannonButton.disabled = !ready;
     this.resetButton.hidden = state !== GameState.SPECTATE;
+    this.backButton.hidden = state !== GameState.SPECTATE;
   }
 
   /** power: 0~1, speed: m/s */
