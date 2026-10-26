@@ -5,7 +5,7 @@ import { CameraRig, type CameraController } from '../src/camera/CameraRig';
 import { ChaseCam, type ChaseTarget } from '../src/camera/ChaseCam';
 import { CutsceneCam } from '../src/camera/CutsceneCam';
 import { clamp01, easeInOutCubic, easeOutBack, smoothing } from '../src/camera/easing';
-import { CAMERA, CANNON, PHYSICS, PROJECTILE } from '../src/config';
+import { CAMERA, CANNON, PENETRATION, PHYSICS, PROJECTILE } from '../src/config';
 import {
   aimDirection,
   clampAim,
@@ -13,6 +13,7 @@ import {
   simulateTrajectory,
   trajectoryCapacity,
 } from '../src/game/ballistics';
+import { penetrationBlasts, penetrationDepth } from '../src/game/penetration';
 import { Projectile } from '../src/game/Projectile';
 import { GameState, StateMachine, TRANSITIONS } from '../src/game/StateMachine';
 import { PhysicsWorld } from '../src/physics/PhysicsWorld';
@@ -244,5 +245,40 @@ describe('Projectile', () => {
     const v = PROJECTILE.muzzleSpeedMax;
     expect(hitEnergy / (0.5 * PROJECTILE.mass * v * v)).toBeCloseTo(1, 1);
     expect(projectile.position.z).toBeGreaterThan(-20); // 판 앞에서 멈췄다
+  });
+});
+
+describe('penetration', () => {
+  const dir = { x: 0, y: 0, z: -1 };
+  const at = { x: 0, y: 10, z: 0 };
+
+  it('weak shots stop at the surface with all their energy', () => {
+    const blasts = penetrationBlasts(at, dir, PENETRATION.minEnergy * 0.9, 70);
+    expect(blasts).toEqual([{ point: at, energy: PENETRATION.minEnergy * 0.9, delay: 0 }]);
+    expect(penetrationDepth(PENETRATION.minEnergy)).toBe(0);
+  });
+
+  it('strong shots drill in along the path, conserving energy', () => {
+    const energy = 3.6e6; // 120 m/s
+    const blasts = penetrationBlasts(at, dir, energy, 120);
+    const depth = penetrationDepth(energy);
+    expect(depth).toBeCloseTo((energy - PENETRATION.minEnergy) / PENETRATION.energyPerMeter);
+    expect(blasts.length).toBe(1 + Math.ceil(depth / PENETRATION.spacing));
+    expect(blasts.reduce((s, b) => s + b.energy, 0)).toBeCloseTo(energy, 3);
+    expect(blasts[0]!.energy).toBeCloseTo(energy * PENETRATION.contactShare);
+    const last = blasts[blasts.length - 1]!;
+    expect(last.point.z).toBeCloseTo(-depth); // 깊이 끝
+    for (let i = 1; i < blasts.length; i++) {
+      expect(blasts[i]!.delay).toBeGreaterThan(blasts[i - 1]!.delay); // 순서대로 터진다
+      if (i > 1) expect(blasts[i]!.energy).toBeLessThan(blasts[i - 1]!.energy); // 깊을수록 약하게
+    }
+  });
+
+  it('depth is capped and never goes underground', () => {
+    expect(penetrationDepth(1e12)).toBe(PENETRATION.maxDepth);
+    const down = { x: 0, y: -0.6, z: -0.8 };
+    for (const b of penetrationBlasts({ x: 0, y: 2, z: 0 }, down, 3.6e6, 120)) {
+      expect(b.point.y).toBeGreaterThanOrEqual(0);
+    }
   });
 });

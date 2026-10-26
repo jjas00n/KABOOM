@@ -11,6 +11,8 @@ const SPHERE_SEGMENTS = 24;
 
 export interface ProjectileHit {
   point: Vector3;
+  /** 충돌 직전 진행 방향 (단위 벡터) */
+  direction: Vector3;
   /** 충돌 직전 운동에너지 ½mv² (J) */
   energy: number;
   speed: number;
@@ -87,6 +89,7 @@ export class Projectile implements ChaseTarget {
     const speed = body.preStepVelocity.length();
     return {
       point: body.currPos.clone(),
+      direction: body.preStepVelocity.clone().normalize(),
       energy: 0.5 * body.rigidBody.mass() * speed * speed,
       speed,
     };

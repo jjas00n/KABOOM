@@ -19,6 +19,7 @@ import { createStage } from '../sandbox/Stage';
 import { HUD } from '../ui/HUD';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
 import { muzzleSpeed } from './ballistics';
+import { penetrationBlasts, type Blast } from './penetration';
 import { BuildingSite } from './BuildingSite';
 import { Cannon } from './Cannon';
 import { Projectile, type ProjectileHit } from './Projectile';
@@ -61,6 +62,17 @@ export class Game {
   private readonly buildingCenter = new Vector3(0, 0, 0);
   private readonly impactPoint = new Vector3();
   private pendingHit: ProjectileHit | null = null;
+  /** 포탄이 건물(조각)에 맞았는지. 땅에 맞으면 관통하지 않는다 */
+  private hitBuilding = false;
+  /** 관통 경로의 아직 안 터진 폭발 (delay 오름차순), 첫 충돌 뒤 경과 물리 시간 */
+  private blasts: Blast[] = [];
+  private nextBlast = 0;
+  private drillTime = 0;
+  private readonly drillFrom = new Vector3();
+  private readonly drillDir = new Vector3();
+  private drillSpeed = 0;
+  private drillDepth = 0;
+  private readonly blastPoint = new Vector3();
   private hitStopLeft = 0;
   private savedTimeScale = 1;
 
@@ -109,6 +121,7 @@ export class Game {
   step(dt: number): void {
     this.site.step(dt); // 여기서 충돌 이벤트가 처리되며 onCollision이 불린다
     this.projectile.step(dt);
+    this.stepPenetration(dt);
     if (!this.fsm.is(GameState.PROJECTILE_CAM)) return;
     if (this.pendingHit) {
       this.fsm.transition(GameState.IMPACT);
@@ -131,7 +144,8 @@ export class Game {
         break;
       case GameState.IMPACT:
         this.hitStopLeft -= dt;
-        if (this.hitStopLeft <= 0) this.fsm.transition(GameState.SPECTATE);
+        // 관통 중이면 다 파고들 때까지 슬로모션을 유지한다
+        if (this.hitStopLeft <= 0 && !this.drilling) this.fsm.transition(GameState.SPECTATE);
         break;
     }
     this.cannon.update(dt);
@@ -224,7 +238,17 @@ export class Game {
     this.pendingHit = null;
     this.impactPoint.copy(hit.point);
     this.projectile.remove();
-    this.site.detonate(hit.point, hit.energy);
+    this.blasts = this.hitBuilding
+      ? penetrationBlasts(hit.point, hit.direction, hit.energy, hit.speed)
+      : [{ point: hit.point, energy: hit.energy, delay: 0 }];
+    this.nextBlast = 0;
+    this.drillTime = 0;
+    this.drillFrom.copy(hit.point);
+    this.drillDir.copy(hit.direction);
+    this.drillSpeed = hit.speed;
+    const last = this.blasts[this.blasts.length - 1]!.point;
+    this.drillDepth = this.drillFrom.distanceTo(last);
+    this.stepPenetration(0); // 표면 폭발은 즉시
     this.savedTimeScale = this.time.timeScale;
     this.time.timeScale = HIT_STOP.timeScale;
     this.hitStopLeft = HIT_STOP.durationSec;
@@ -233,8 +257,34 @@ export class Game {
 
   private onCollision(a: PhysicsBody, b: PhysicsBody): void {
     if (!this.fsm.is(GameState.PROJECTILE_CAM) || this.pendingHit) return;
-    if (this.projectile.isBody(a) || this.projectile.isBody(b)) {
-      this.pendingHit = this.projectile.impact();
+    if (!this.projectile.isBody(a) && !this.projectile.isBody(b)) return;
+    const other = this.projectile.isBody(a) ? b : a;
+    this.hitBuilding = this.site.destruction?.fragments.chunkOfBody(other) !== undefined;
+    this.pendingHit = this.projectile.impact();
+  }
+
+  /** 관통 경로의 폭발이 남아 있는지 */
+  private get drilling(): boolean {
+    return this.nextBlast < this.blasts.length;
+  }
+
+  /**
+   * 관통 진행 (물리 시간): 때가 된 폭발을 터뜨리고, 포탄 메시를 경로를 따라 움직인다.
+   * hit-stop 중엔 물리 시간이 느려서 파고드는 모습이 보인다.
+   */
+  private stepPenetration(dt: number): void {
+    if (!this.drilling) return;
+    this.drillTime += dt;
+    while (this.drilling && this.blasts[this.nextBlast]!.delay <= this.drillTime) {
+      const b = this.blasts[this.nextBlast++]!;
+      this.site.detonate(this.blastPoint.set(b.point.x, b.point.y, b.point.z), b.energy);
+      if (this.nextBlast > 1) this.impactPoint.copy(this.blastPoint); // 관람 중심은 가장 깊은 폭발
+    }
+    const mesh = this.projectile.mesh;
+    mesh.visible = this.drilling;
+    if (mesh.visible) {
+      const d = Math.min(this.drillTime * this.drillSpeed, this.drillDepth);
+      mesh.position.copy(this.drillFrom).addScaledVector(this.drillDir, d);
     }
   }
 

@@ -216,6 +216,19 @@ export const DEBRIS = {
   killY: -20, // 이 높이 아래로 떨어진 조각은 제거
 } as const;
 
+/**
+ * 관통 (game/penetration.ts): 포탄 에너지가 문턱을 넘으면 맞은 면 뒤로 파고들며 추가 폭발.
+ * 관통 깊이 = (에너지 - minEnergy) / energyPerMeter, maxDepth로 자름.
+ * 파워별 대략 (500kg): 76m/s(1.4MJ) ≈ 0.5m, 96m/s(2.3MJ) ≈ 2.8m, 120m/s(3.6MJ) ≈ 6m
+ */
+export const PENETRATION = {
+  minEnergy: 1.25e6, // J. 이보다 약하면 표면에서 끝
+  energyPerMeter: 4e5, // J/m. 파고드는 데 드는 에너지 (콘크리트 저항)
+  maxDepth: 10, // m
+  contactShare: 0.55, // 관통할 때 표면 폭발에 쓰는 에너지 비율. 나머지는 안쪽 폭발들로
+  spacing: 2, // 안쪽 폭발 사이 간격 (m)
+} as const;
+
 export const HIT_STOP = {
   timeScale: 0.15,
   durationSec: 0.3,
