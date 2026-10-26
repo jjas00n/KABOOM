@@ -28,8 +28,25 @@ export const FRACTURE = {
     column: 6,
     glass: 80,
   },
-  adaptiveSeedRadius: 3, // TODO(Phase2)
-  adaptiveSeedMultiplier: 4, // TODO(Phase2)
+  adaptiveSeedRadius: 3, // 이 반경 안에서 시드 밀도가 올라간다
+  adaptiveSeedMultiplier: 4, // 중심점에서의 밀도 배수 (반경 끝에서 1배로 선형 감소)
+  adaptiveMaxAttempts: 100, // 기각 샘플링: 시드 1개당 최대 시도 횟수
+  jitter: 0.8, // 지터 그리드: 칸 크기 대비 흔들림 비율 (0 = 정격자, 1 = 칸 전체)
+  planeEpsilon: 1e-7, // 반공간 판정 허용 오차 (m)
+  weldEpsilon: 1e-6, // 같은 점으로 볼 거리 (m)
+  minFaceArea: 1e-8, // 이보다 작은 면은 버린다 (m^2)
+  uvScale: 0.5, // 텍스처 반복 / m (월드 좌표 평면 투영)
+  progressEvery: 64, // 워커가 진행률을 보내는 셀 간격
+} as const;
+
+/** 재질 물성 */
+export const CONCRETE = {
+  density: 2400, // kg/m^3
+  exteriorColor: 0xb8b2a7,
+  exteriorRoughness: 0.9,
+  interiorColor: 0x77706a, // 단면: 더 어둡고 거칠게
+  interiorRoughness: 1,
+  friction: 0.8,
 } as const;
 
 export const CANNON = {
@@ -47,7 +64,9 @@ export const PROJECTILE = {
 
 export const EXPLOSION = {
   radius: 4, // TODO(Phase4)
-  impulseScale: 1, // TODO(Phase4)
+  peakDeltaV: 14, // 폭심에서 조각이 얻는 속도 (m/s). 임펄스 = 질량 × 이 값 × 감쇠
+  upwardBias: 0.3, // 방향 벡터에 더하는 위쪽 성분 (흙먼지처럼 솟구치게)
+  spin: 2, // 무작위 회전 임펄스 배수 (rad/s 단위 근사)
   falloffExponent: 2, // TODO(Phase4)
 } as const;
 
@@ -72,6 +91,8 @@ export const CAMERA = {
 export const RENDER = {
   shadowMapSize: 2048,
   shadowCameraSize: 30, // 방향광 그림자 카메라 반경
+  // 법선 방향 오프셋(m). 조각 이음매에서 표면 바로 아래 단면이 그림자 맵에 찍혀 생기는 줄무늬(acne) 방지
+  shadowNormalBias: 0.03,
   maxPixelRatio: 2,
   exposure: 1,
   fov: 50,
@@ -91,6 +112,17 @@ export const LIGHTING = {
 
 export const DEBUG = {
   fpsSampleSec: 0.5,
+} as const;
+
+/** Phase 2 분할 데모 전용 (건물이 들어오면 제거) */
+export const FRACTURE_DEMO = {
+  boxMin: { x: -2, y: 0.001, z: -1 }, // 지면과 살짝 띄워 초기 겹침 방지
+  boxMax: { x: 2, y: 3, z: 1 },
+  seedCount: 300,
+  rngSeed: 1337,
+  explosionRadius: 3,
+  cameraPosition: { x: 6, y: 4.5, z: 8 },
+  cameraTarget: { x: 0, y: 1.5, z: 0 },
 } as const;
 
 /** Phase 1 물리 샌드박스 전용 (건물/대포가 들어오면 제거) */

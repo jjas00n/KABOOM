@@ -3,22 +3,19 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import {
   BoxGeometry,
   Color,
-  DirectionalLight,
-  HemisphereLight,
   InstancedMesh,
   Matrix4,
-  Mesh,
   MeshStandardMaterial,
-  PlaneGeometry,
   Raycaster,
   SphereGeometry,
   Vector2,
   Vector3,
 } from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { DEBRIS, LIGHTING, RENDER, SANDBOX } from '../config';
+import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { DEBRIS, SANDBOX } from '../config';
 import type { Renderer } from '../core/Renderer';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
+import { createStage, onCanvasClick } from './Stage';
 
 const HIDDEN = new Matrix4().makeScale(0, 0, 0);
 const IDENTITY_ROT = { x: 0, y: 0, z: 0, w: 1 };
@@ -35,7 +32,6 @@ export class PhysicsSandbox {
 
   private readonly raycaster = new Raycaster();
   private readonly pointer = new Vector2();
-  private readonly pointerDown = new Vector2();
   private readonly fireDir = new Vector3();
   private readonly firePos = new Vector3();
 
@@ -43,11 +39,8 @@ export class PhysicsSandbox {
     private readonly renderer: Renderer,
     private readonly physics: PhysicsWorld,
   ) {
-    const { scene, camera, canvas } = renderer;
-    scene.background = new Color(LIGHTING.background);
-
-    this.addLights();
-    this.addGround();
+    const { scene, canvas } = renderer;
+    this.controls = createStage(renderer, physics, SANDBOX.cameraPosition, SANDBOX.cameraTarget);
 
     const { x: nx, y: ny, z: nz } = SANDBOX.boxGrid;
     const size = SANDBOX.boxSize;
@@ -75,15 +68,10 @@ export class PhysicsSandbox {
     }
     scene.add(this.spheres);
 
-    const { cameraPosition: cp, cameraTarget: ct } = SANDBOX;
-    camera.position.set(cp.x, cp.y, cp.z);
-    this.controls = new OrbitControls(camera, canvas);
-    this.controls.target.set(ct.x, ct.y, ct.z);
-    this.controls.enableDamping = true;
-    this.controls.update();
-
-    canvas.addEventListener('pointerdown', this.onPointerDown);
-    canvas.addEventListener('pointerup', this.onPointerUp);
+    onCanvasClick(canvas, (x, y) => {
+      this.pointer.set(x, y);
+      this.fireSphere();
+    });
   }
 
   update(): void {
@@ -91,7 +79,7 @@ export class PhysicsSandbox {
     this.physics.removeBelow(DEBRIS.killY, this.onBodyRemoved);
   }
 
-  resetBoxes(): void {
+  reset(): void {
     for (let i = 0; i < this.boxBodies.length; i++) {
       const body = this.boxBodies[i]!;
       if (!this.physics.has(body)) {
@@ -111,39 +99,6 @@ export class PhysicsSandbox {
       this.removeSphere(i);
     }
     this.spheres.instanceMatrix.needsUpdate = true;
-  }
-
-  private addLights(): void {
-    const sun = new DirectionalLight(LIGHTING.sunColor, LIGHTING.sunIntensity);
-    const sp = LIGHTING.sunPosition;
-    sun.position.set(sp.x, sp.y, sp.z);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(RENDER.shadowMapSize, RENDER.shadowMapSize);
-    const s = RENDER.shadowCameraSize;
-    Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s });
-    sun.shadow.camera.updateProjectionMatrix();
-    this.renderer.scene.add(sun);
-
-    this.renderer.scene.add(
-      new HemisphereLight(LIGHTING.hemiSkyColor, LIGHTING.hemiGroundColor, LIGHTING.hemiIntensity),
-    );
-  }
-
-  private addGround(): void {
-    const size = SANDBOX.groundSize;
-    const ground = new Mesh(
-      new PlaneGeometry(size, size),
-      new MeshStandardMaterial({ color: SANDBOX.groundColor, roughness: 1 }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    this.renderer.scene.add(ground);
-
-    const half = SANDBOX.groundThickness / 2;
-    this.physics.add(
-      RAPIER.RigidBodyDesc.fixed().setTranslation(0, -half, 0),
-      RAPIER.ColliderDesc.cuboid(size / 2, half, size / 2),
-    );
   }
 
   private addBoxes(nx: number, ny: number, nz: number, size: number): void {
@@ -226,23 +181,5 @@ export class PhysicsSandbox {
       target.mesh.setMatrixAt(target.index, HIDDEN);
       target.mesh.instanceMatrix.needsUpdate = true;
     }
-  };
-
-  private readonly onPointerDown = (e: PointerEvent): void => {
-    this.pointerDown.set(e.clientX, e.clientY);
-  };
-
-  private readonly onPointerUp = (e: PointerEvent): void => {
-    if (e.button !== 0) return;
-    const dx = e.clientX - this.pointerDown.x;
-    const dy = e.clientY - this.pointerDown.y;
-    if (Math.hypot(dx, dy) > SANDBOX.clickDragThresholdPx) return; // 카메라 드래그였음
-
-    const rect = this.renderer.canvas.getBoundingClientRect();
-    this.pointer.set(
-      ((e.clientX - rect.left) / rect.width) * 2 - 1,
-      -((e.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    this.fireSphere();
   };
 }

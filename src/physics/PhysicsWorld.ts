@@ -1,16 +1,29 @@
 // Rapier 월드 래퍼: 초기화, 바디 ↔ 메시 동기화(렌더 보간), 충돌 이벤트 큐
 import RAPIER from '@dimforge/rapier3d-compat';
-import { InstancedMesh, Matrix4, Object3D, Quaternion, Vector3 } from 'three';
+import { BatchedMesh, InstancedMesh, Matrix4, Object3D, Quaternion, Vector3 } from 'three';
 import { PHYSICS } from '../config';
 import { CollisionEventQueue } from './CollisionEvents';
 
-/** 물리 바디가 움직일 렌더 대상. InstancedMesh는 인스턴스 한 칸을 가리킨다. */
-export type SyncTarget = Object3D | { mesh: InstancedMesh; index: number };
+/** BatchedMesh의 인스턴스 하나 */
+export interface BatchSlot {
+  batch: BatchedMesh;
+  id: number;
+}
+
+/**
+ * 물리 바디가 움직일 렌더 대상. InstancedMesh는 인스턴스 한 칸을 가리킨다.
+ * BatchSlot 배열은 재질별로 나뉜 여러 BatchedMesh의 인스턴스를 함께 움직인다(외면 + 단면 등).
+ */
+export type SyncTarget = Object3D | { mesh: InstancedMesh; index: number } | readonly BatchSlot[];
 
 const UNIT_SCALE = new Vector3(1, 1, 1);
 const scratchPos = new Vector3();
 const scratchQuat = new Quaternion();
 const scratchMatrix = new Matrix4();
+
+export function isBatchSlots(target: SyncTarget): target is readonly BatchSlot[] {
+  return Array.isArray(target);
+}
 
 export class PhysicsBody {
   readonly prevPos = new Vector3();
@@ -129,6 +142,9 @@ export class PhysicsWorld {
       if (target instanceof Object3D) {
         target.position.copy(scratchPos);
         target.quaternion.copy(scratchQuat);
+      } else if (isBatchSlots(target)) {
+        scratchMatrix.compose(scratchPos, scratchQuat, UNIT_SCALE);
+        for (const slot of target) slot.batch.setMatrixAt(slot.id, scratchMatrix);
       } else {
         scratchMatrix.compose(scratchPos, scratchQuat, UNIT_SCALE);
         target.mesh.setMatrixAt(target.index, scratchMatrix);
