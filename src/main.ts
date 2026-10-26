@@ -1,6 +1,7 @@
 // 진입점: 물리 초기화 → 렌더러 → 씬 → 루프 시작
 import type GUI from 'lil-gui';
 import { BUILDING, QUALITY_PRESETS } from './config';
+import { FrameTimer } from './core/FrameTimer';
 import { Loop } from './core/Loop';
 import { Renderer } from './core/Renderer';
 import { PhysicsWorld } from './physics/PhysicsWorld';
@@ -11,6 +12,8 @@ import { DebugGUI } from './ui/DebugGUI';
 import { LoadingOverlay } from './ui/LoadingOverlay';
 
 interface Demo {
+  /** 고정 timestep마다 물리 스텝 직후 */
+  step?(dt: number): void;
   update(): void;
   reset(): void;
   setupGui?: (gui: GUI) => void;
@@ -28,6 +31,7 @@ function createBuildingDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
   const demo = new BuildingDemo(renderer, physics, new LoadingOverlay());
   const { limits } = BUILDING;
   return {
+    step: (dt) => demo.step(dt),
     update: () => demo.update(),
     reset: () => demo.reset(),
     setupGui: (gui) => {
@@ -40,6 +44,7 @@ function createBuildingDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
       folder.add(s, 'windowRatio', ...limits.windowRatio, 0.05).name('Window ratio');
       folder.add(s, 'seed', 0, 9999, 1).name('Seed');
       folder.add({ regenerate: () => demo.reset() }, 'regenerate').name('Regenerate');
+      folder.add({ smash: () => demo.smashTest() }, 'smash').name('Smash test');
       folder
         .add(demo, 'debugColors')
         .name('Color fragments')
@@ -76,14 +81,28 @@ async function main(): Promise<void> {
   const physics = await PhysicsWorld.create();
   const renderer = new Renderer(canvas);
   const demo = createDemo(renderer, physics);
+  const timer = new FrameTimer();
 
   const loop = new Loop({
-    step: () => physics.step(),
+    step: (dt) => {
+      const t = performance.now();
+      physics.step();
+      demo.step?.(dt);
+      timer.add('physics', t);
+      timer.countStep();
+    },
     render: (alpha, realDt) => {
+      let t = performance.now();
       demo.update();
+      timer.add('update', t);
+      t = performance.now();
       physics.sync(alpha);
+      timer.add('sync', t);
       debug?.update(realDt);
+      t = performance.now();
       renderer.render();
+      timer.add('render', t);
+      timer.endFrame(realDt);
     },
   });
 
@@ -91,10 +110,16 @@ async function main(): Promise<void> {
     ? new DebugGUI({
         stepper: loop.stepper,
         physics,
+        timer,
         onReset: () => demo.reset(),
         setup: demo.setupGui,
       })
     : null;
+
+  if (import.meta.env.DEV) {
+    // 개발 중 콘솔/자동화 측정용 핸들
+    (window as unknown as { __kaboom: unknown }).__kaboom = { physics, demo, loop, timer };
+  }
 
   loop.start();
 }

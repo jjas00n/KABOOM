@@ -8,13 +8,15 @@ import {
   type BuildingParams,
 } from '../building/BuildingGenerator';
 import { memberSeeds, seedCountsForPreset } from '../building/seedBudget';
-import { BUILDING_DEMO, DEBRIS, DEFAULT_QUALITY, type QualityPreset } from '../config';
+import { BUILDING, BUILDING_DEMO, DEBRIS, DEFAULT_QUALITY, type QualityPreset } from '../config';
 import type { Renderer } from '../core/Renderer';
+import { DebrisManager } from '../destruction/DebrisManager';
 import { applyExplosion } from '../destruction/Explosion';
 import { FragmentSet, hideRemovedFragment } from '../destruction/FragmentSet';
 import { fractureInWorker } from '../fracture/FractureJob';
-import { MATERIAL } from '../fracture/Fragment';
+import { MATERIAL, type Fragment } from '../fracture/Fragment';
 import { createFragmentMaterials } from '../fracture/FragmentMeshes';
+import type { Aabb } from '../fracture/polyhedron';
 import { createRng } from '../fracture/seeds';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
@@ -34,6 +36,8 @@ export class BuildingDemo {
   private readonly controls: OrbitControls;
   private readonly materials = createFragmentMaterials();
   private fragments: FragmentSet | null = null;
+  private readonly debris: DebrisManager;
+  private footprint: Aabb | null = null;
   /** reset이 겹쳐 들어오면 늦게 끝난 이전 생성 결과를 버리기 위한 세대 번호 */
   private generation = 0;
 
@@ -52,11 +56,17 @@ export class BuildingDemo {
       BUILDING_DEMO.cameraPosition,
       BUILDING_DEMO.cameraTarget,
     );
+    this.debris = new DebrisManager(physics, hideRemovedFragment);
     onCanvasClick(renderer.canvas, (x, y) => {
       this.pointer.set(x, y);
       this.explodeAtPointer();
     });
     this.reset();
+  }
+
+  /** 고정 timestep마다 (물리 스텝 직후) */
+  step(dt: number): void {
+    this.debris.step(dt);
   }
 
   update(): void {
@@ -81,11 +91,13 @@ export class BuildingDemo {
     const generation = ++this.generation;
     this.fragments?.dispose();
     this.fragments = null;
+    this.debris.clear();
     const started = performance.now();
     this.loading.show('Generating building…');
 
     const { quality, ...params } = this.settings;
-    const { members } = generateBuilding(params);
+    const { members, footprint } = generateBuilding(params);
+    this.footprint = footprint;
     const counts = seedCountsForPreset(members, quality);
     const rng = createRng(params.seed);
     const jobs = members.map((m, i) => ({
@@ -106,19 +118,43 @@ export class BuildingDemo {
     await nextFrame(); // 진행률 표시가 그려진 뒤 무거운 메인 스레드 작업
     if (generation !== this.generation) return;
 
-    this.fragments = new FragmentSet(
-      this.renderer.scene,
-      this.physics,
-      frags,
-      this.materials,
-      (i) => members[frags[i]!.member]!.anchor,
-    );
+    this.fragments = new FragmentSet(this.renderer.scene, this.physics, frags, this.materials, {
+      isAnchor: (i) => members[frags[i]!.member]!.anchor,
+      onActivate: (i, body) => this.debris.add(body, frags[i]!.volume),
+      simpleColliderMaxVolume: volumePercentile(frags, DEBRIS.simpleColliderPercentile),
+    });
     if (this.debugColors) this.setDebugColors(true);
 
     this.stats.members = members.length;
     this.stats.fragments = frags.length;
     this.stats.loadMs = Math.round(performance.now() - started);
     this.loading.hide();
+  }
+
+  /**
+   * 성능 측정용 재현 시나리오: 정면 외벽의 고정된 지점들(칸 중앙 × 층)을 한꺼번에 폭파.
+   * 같은 건물 설정이면 매번 같은 조각이 같은 힘을 받는다.
+   */
+  smashTest(): void {
+    if (!this.fragments || !this.footprint) return;
+    const { min, max } = this.footprint;
+    const { floors, baysX, baysZ, floorHeight } = this.settings;
+    const radius = BUILDING_DEMO.explosionRadius;
+    const random = createRng(BUILDING_DEMO.smashSeed);
+    const bayX = (max.x - min.x) / baysX;
+    const bayZ = (max.z - min.z) / baysZ;
+    const points: [number, number][] = [];
+    for (let i = 0; i < baysX; i++) points.push([min.x + (i + 0.5) * bayX, min.z]);
+    for (let j = 0; j < baysZ; j++) points.push([max.x, min.z + (j + 0.5) * bayZ]);
+    for (let f = 0; f < floors; f++) {
+      const y = BUILDING.foundationThickness + (f + 0.5) * floorHeight;
+      for (const [x, z] of points) {
+        this.position.set(x, y, z);
+        this.fragments.activateWithin(this.position, radius);
+        applyExplosion(this.fragments.bodies, this.position, { radius, random });
+      }
+    }
+    this.debris.enforceCap();
   }
 
   private explodeAtPointer(): void {
@@ -130,8 +166,16 @@ export class BuildingDemo {
     this.position.copy(hit.point);
     const radius = BUILDING_DEMO.explosionRadius;
     this.fragments.activateWithin(this.position, radius);
+    this.debris.enforceCap();
     applyExplosion(this.fragments.bodies, this.position, { radius });
   }
+}
+
+/** 조각 부피의 하위 p 분위수 (p <= 0이면 0 → 단순 콜라이더 끔) */
+function volumePercentile(frags: readonly Fragment[], p: number): number {
+  if (p <= 0 || frags.length === 0) return 0;
+  const sorted = frags.map((f) => f.volume).sort((a, b) => a - b);
+  return sorted[Math.min(Math.floor(p * sorted.length), sorted.length - 1)]!;
 }
 
 function nextFrame(): Promise<void> {

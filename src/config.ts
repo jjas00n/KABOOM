@@ -14,9 +14,12 @@ export const DEFAULT_QUALITY: QualityPreset = 'medium';
 
 export const PHYSICS = {
   fixedTimestep: 1 / 60,
-  maxSubSteps: 5, // 한 프레임 최대 물리 스텝 수 (spiral of death 방지)
+  // 한 프레임 최대 물리 스텝 수 (spiral of death 방지). 스텝이 프레임보다 비싸지면 FPS 대신 물리가
+  // 실시간보다 느려진다(자연스러운 슬로모션). 5였을 때 붕괴 구간이 5배로 증폭됐다 (docs/PERF.md).
+  maxSubSteps: 2,
   maxFrameDt: 0.25, // 탭 전환 등으로 생긴 거대 dt 상한
   gravity: { x: 0, y: -9.81, z: 0 },
+  solverIterations: 2, // Rapier 기본 4. 잔해 더미 붕괴 구간 비용을 줄인다 (docs/PERF.md)
 } as const;
 
 export const FRACTURE = {
@@ -107,9 +110,21 @@ export const EXPLOSION = {
   falloffExponent: 2, // TODO(Phase4)
 } as const;
 
+/**
+ * 잔해 정책 (destruction/DebrisManager.ts). 측정 근거는 docs/PERF.md.
+ * 붕괴 직후 수천 개의 dynamic 조각이 서로 비비며 잠들지 않는 것이 FPS 병목이었다.
+ */
 export const DEBRIS = {
-  maxDynamicFragments: 3000,
-  sleepAfterSec: 2, // TODO(Phase4)
+  maxDynamicFragments: 1500, // 초과하면 작은(같으면 오래된) 조각부터 제거
+  // 이 속도 아래로 settleAfterSec 동안 머문 조각은 fixed로 굳혀 시뮬레이션에서 뺀다.
+  // rb.sleep()만으로는 부족하다: 잔해 더미는 하나의 island라 이웃이 계속 깨운다 (docs/PERF.md).
+  settleLinearSpeed: 0.2, // m/s
+  settleAngularSpeed: 0.5, // rad/s
+  settleAfterSec: 0.5, // Infinity면 끔
+  freezeAfterSec: 0.5, // Rapier가 스스로 재운 조각도 이만큼 지나면 fixed로 (Infinity면 끔)
+  linearDamping: 0.1, // dynamic 조각 감쇠: 구르기/미끄러짐을 빨리 멈추게
+  angularDamping: 0.8,
+  simpleColliderPercentile: 0.3, // 부피 하위 이 비율의 조각은 cuboid 콜라이더 (0이면 끔)
   fadeOutSec: 8, // TODO(Phase4)
   killY: -20, // 이 높이 아래로 떨어진 조각은 제거
 } as const;
@@ -157,6 +172,8 @@ export const BUILDING_DEMO = {
   cameraPosition: { x: 38, y: 22, z: 44 },
   cameraTarget: { x: 0, y: 9, z: 0 },
   debugColorSeed: 7, // 조각 경계 색칠용 난수 시드
+  // 성능 측정 시나리오: 모든 층의 정면(-z)과 오른쪽(+x) 외벽 칸 중앙을 폭파 (6층 4×3 → 42곳)
+  smashSeed: 99, // 성능 측정 시나리오의 회전 난수 시드
 } as const;
 
 /** Phase 2 분할 데모 전용 (건물이 들어오면 제거) */

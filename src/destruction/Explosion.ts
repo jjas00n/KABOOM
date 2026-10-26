@@ -35,6 +35,7 @@ export function applyExplosion(
 
   let hit = 0;
   for (const body of bodies) {
+    if (!body.alive) continue;
     const rb = body.rigidBody;
     if (!rb.isDynamic()) continue;
     dir.copy(body.currPos).sub(center);

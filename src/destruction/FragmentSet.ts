@@ -8,28 +8,41 @@ import { FragmentMeshes, type FragmentMaterials } from '../fracture/FragmentMesh
 import type { Vec3Like } from '../fracture/polyhedron';
 import { isBatchSlots, type PhysicsBody, type PhysicsWorld } from '../physics/PhysicsWorld';
 
+export interface FragmentSetOptions {
+  /** 앵커(항상 fixed) 여부. 생략하면 앵커 없음. */
+  isAnchor?: (index: number) => boolean;
+  /** 조각이 dynamic으로 바뀐 직후 (DebrisManager 등록용) */
+  onActivate?: (index: number, body: PhysicsBody) => void;
+  /**
+   * 부피가 이 값 이하인 조각은 convexHull 대신 같은 부피의 cuboid 콜라이더를 쓴다
+   * (박스-박스 접촉이 볼록-볼록보다 싸다). 0이면 전부 convexHull.
+   */
+  simpleColliderMaxVolume?: number;
+}
+
 export class FragmentSet {
   readonly meshes: FragmentMeshes;
   readonly bodies: PhysicsBody[];
   private readonly hits: Intersection[] = [];
+  private readonly isAnchor: (index: number) => boolean;
+  private readonly onActivate?: (index: number, body: PhysicsBody) => void;
 
   constructor(
     scene: Scene,
     private readonly physics: PhysicsWorld,
     readonly fragments: readonly Fragment[],
     materials: FragmentMaterials,
-    /** 앵커(항상 fixed) 여부. 생략하면 앵커 없음. */
-    private readonly isAnchor: (index: number) => boolean = () => false,
+    options: FragmentSetOptions = {},
   ) {
+    this.isAnchor = options.isAnchor ?? (() => false);
+    this.onActivate = options.onActivate;
+    const simpleMax = options.simpleColliderMaxVolume ?? 0;
     this.meshes = new FragmentMeshes(fragments, materials);
     this.bodies = fragments.map((frag, i) => {
       const glass = frag.material === MATERIAL.glass;
       const c = frag.centroid;
-      const collider = (
-        RAPIER.ColliderDesc.convexHull(frag.hull) ??
-        // 퇴화 hull(사실상 없음) 대비: 같은 부피의 구
-        RAPIER.ColliderDesc.ball(Math.cbrt((3 * frag.volume) / (4 * Math.PI)))
-      )
+      const shape = frag.volume <= simpleMax ? cuboidCollider(frag) : hullCollider(frag);
+      const collider = shape
         .setDensity(glass ? GLASS.density : CONCRETE.density)
         .setFriction(glass ? GLASS.friction : CONCRETE.friction);
       return physics.add(
@@ -45,7 +58,8 @@ export class FragmentSet {
   activate(index: number): boolean {
     const body = this.bodies[index]!;
     if (this.isAnchor(index) || !this.physics.has(body) || !body.rigidBody.isFixed()) return false;
-    body.rigidBody.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    this.physics.setDynamic(body);
+    this.onActivate?.(index, body);
     return true;
   }
 
@@ -85,4 +99,40 @@ export function hideRemovedFragment(body: PhysicsBody): void {
   const target = body.target;
   if (!target || !isBatchSlots(target)) return;
   for (const slot of target) slot.batch.setVisibleAt(slot.id, false);
+}
+
+function hullCollider(frag: Fragment): RAPIER.ColliderDesc {
+  return (
+    RAPIER.ColliderDesc.convexHull(frag.hull) ??
+    // 퇴화 hull(사실상 없음) 대비: 같은 부피의 구
+    RAPIER.ColliderDesc.ball(Math.cbrt((3 * frag.volume) / (4 * Math.PI)))
+  );
+}
+
+/** hull의 AABB를 부피가 조각과 같아지게 줄인 cuboid (질량이 원래 조각과 같다) */
+function cuboidCollider(frag: Fragment): RAPIER.ColliderDesc {
+  const h = frag.hull;
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (let k = 0; k < h.length; k += 3) {
+    minX = Math.min(minX, h[k]!);
+    minY = Math.min(minY, h[k + 1]!);
+    minZ = Math.min(minZ, h[k + 2]!);
+    maxX = Math.max(maxX, h[k]!);
+    maxY = Math.max(maxY, h[k + 1]!);
+    maxZ = Math.max(maxZ, h[k + 2]!);
+  }
+  const hx = (maxX - minX) / 2;
+  const hy = (maxY - minY) / 2;
+  const hz = (maxZ - minZ) / 2;
+  const scale = Math.cbrt(frag.volume / (8 * hx * hy * hz));
+  return RAPIER.ColliderDesc.cuboid(hx * scale, hy * scale, hz * scale).setTranslation(
+    (minX + maxX) / 2,
+    (minY + maxY) / 2,
+    (minZ + maxZ) / 2,
+  );
 }
