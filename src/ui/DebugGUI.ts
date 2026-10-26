@@ -8,6 +8,8 @@ export interface DebugGUIOptions {
   stepper: FixedStepper;
   physics: PhysicsWorld;
   onReset: () => void;
+  /** 데모별 추가 컨트롤 */
+  setup?: (gui: GUI) => void;
 }
 
 export class DebugGUI {
@@ -24,7 +26,8 @@ export class DebugGUI {
     this.gui.add(this.stats, 'fps').name('FPS').disable().listen();
     this.gui.add(this.stats, 'bodies').name('Bodies').disable().listen();
     this.gui.add(options.stepper, 'timeScale', 0, 2, 0.05).name('Time scale');
-    this.gui.add({ reset: options.onReset }, 'reset').name('Reset boxes');
+    this.gui.add({ reset: options.onReset }, 'reset').name('Reset');
+    options.setup?.(this.gui);
   }
 
   update(realDt: number): void {
