@@ -3,13 +3,16 @@ import { Quaternion, Scene, Vector3 } from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_BUILDING, generateBuilding } from '../src/building/BuildingGenerator';
 import { allocateSeeds, memberSeeds } from '../src/building/seedBudget';
-import { BUILDING, PHYSICS, STRUCTURE } from '../src/config';
+import { BUILDING, PHYSICS, PROJECTILE, STRUCTURE } from '../src/config';
+import { StructureGraph } from '../src/building/StructureGraph';
 import { DestructionSystem } from '../src/destruction/DestructionSystem';
+import { breakInBlast } from '../src/destruction/Explosion';
 import { FragmentSet } from '../src/destruction/FragmentSet';
 import { MATERIAL, type Fragment } from '../src/fracture/Fragment';
 import { createFragmentMaterials } from '../src/fracture/FragmentMeshes';
 import { runFracture } from '../src/fracture/pipeline';
 import { createRng, uniformSeeds } from '../src/fracture/seeds';
+import { DEBRIS_GROUPS, PROJECTILE_GROUPS } from '../src/physics/collisionGroups';
 import { PhysicsWorld } from '../src/physics/PhysicsWorld';
 
 const CLADDING: readonly string[] = STRUCTURE.cladding;
@@ -157,5 +160,77 @@ describe('DestructionSystem', () => {
     );
     run(0.3);
     expect(system.stats.chainBreaks).toBeGreaterThan(0);
+  });
+});
+
+describe('repeated hits leave no blocking rubble', () => {
+  it('a blast also detaches nearby pieces that have almost no connection left', async () => {
+    const building = generateBuilding({ ...DEFAULT_BUILDING, floors: 2, baysX: 2, baysZ: 2 });
+    const counts = allocateSeeds(building.members, 500);
+    const rng = createRng(6);
+    const frags = runFracture({
+      jobs: building.members.map((m, i) => ({
+        box: m.box,
+        seeds: memberSeeds(m, counts[i]!, rng),
+        material: m.kind === 'glass' ? MATERIAL.glass : MATERIAL.concrete,
+      })),
+    });
+    const member = (i: number) => building.members[frags[i]!.member]!;
+    const graph = StructureGraph.fromFragments(frags, (i) => ({
+      anchor: member(i).anchor,
+      cladding: CLADDING.includes(member(i).kind),
+    }));
+    const positions = new Float64Array(frags.length * 3);
+    frags.forEach((f, i) => positions.set([f.centroid.x, f.centroid.y, f.centroid.z], i * 3));
+
+    // 이전 발사로 거의 다 끊긴 조각을 흉내: 가장 작은 엣지 하나만 남긴다
+    const target = frags.findIndex(
+      (_, i) => !member(i).anchor && graph.incidentStart[i + 1]! - graph.incidentStart[i]! >= 4,
+    );
+    let keep = -1;
+    for (let k = graph.incidentStart[target]!; k < graph.incidentStart[target + 1]!; k++) {
+      const e = graph.incident[k]!;
+      if (keep < 0 || graph.area[e]! < graph.area[keep]!) keep = e;
+    }
+    for (let k = graph.incidentStart[target]!; k < graph.incidentStart[target + 1]!; k++) {
+      const e = graph.incident[k]!;
+      if (e !== keep) graph.breakEdge(e);
+    }
+    expect(graph.remainingAreaFraction(target)).toBeLessThan(STRUCTURE.rubbleFraction);
+    expect(graph.attached[target]).toBe(1);
+
+    // 폭발 반경 밖이지만 rubbleRange 안에서 터뜨린다
+    const radius = 2;
+    const p = frags[target]!.centroid;
+    const center = { x: p.x + radius * 1.2, y: p.y, z: p.z };
+    const detached = breakInBlast(graph, positions, center, radius);
+    expect(detached).toContain(target);
+    expect(graph.attached[target]).toBe(0);
+  });
+
+  it('a shell flies through settled debris but stops at standing structure', async () => {
+    const physics = await PhysicsWorld.create();
+    const drop = (groups: number | null) => {
+      const slab = physics.add(
+        RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0),
+        groups === null
+          ? RAPIER.ColliderDesc.cuboid(2, 0.2, 2)
+          : RAPIER.ColliderDesc.cuboid(2, 0.2, 2).setCollisionGroups(groups),
+      );
+      const shell = physics.add(
+        RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(0, 3, 0)
+          .setLinvel(0, -30, 0)
+          .setCcdEnabled(true),
+        RAPIER.ColliderDesc.ball(PROJECTILE.radius).setCollisionGroups(PROJECTILE_GROUPS),
+      );
+      for (let i = 0; i < 30; i++) physics.step();
+      const y = shell.currPos.y;
+      physics.remove(slab);
+      physics.remove(shell);
+      return y;
+    };
+    expect(drop(DEBRIS_GROUPS)).toBeLessThan(-1); // 잔해는 뚫고 지나감
+    expect(drop(null)).toBeGreaterThan(0); // 서 있는 구조(기본 그룹)에는 막힌다
   });
 });

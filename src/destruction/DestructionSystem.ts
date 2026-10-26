@@ -10,6 +10,7 @@ import { DEBRIS, STRUCTURE } from '../config';
 import type { Fragment } from '../fracture/Fragment';
 import type { FragmentMaterials } from '../fracture/FragmentMeshes';
 import type { Vec3Like } from '../fracture/polyhedron';
+import { DEBRIS_GROUPS } from '../physics/collisionGroups';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import { CollapseSolver, type CollapseEvents } from './CollapseSolver';
 import { DebrisManager } from './DebrisManager';
@@ -141,6 +142,8 @@ export class DestructionSystem {
   }
 
   private onDynamic(chunk: Chunk): void {
+    // 구조에서 떨어져 나온 조각 = 잔해: 포탄과는 부딪히지 않는다 (굳은 뒤에도 유지)
+    for (const c of chunk.body.colliders) c.setCollisionGroups(DEBRIS_GROUPS);
     this.frozen.delete(chunk);
     if (chunk.frags.length > 1) this.compounds.add(chunk);
     this.debris.add(chunk.body, chunk.volume);

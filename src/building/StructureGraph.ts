@@ -41,6 +41,8 @@ export class StructureGraph {
   readonly incidentStart: Uint32Array;
   readonly incident: Uint32Array;
   readonly mass: Float32Array;
+  /** 노드에 처음 붙어 있던 엣지 면적 합 (얼마나 부서졌는지 재는 기준) */
+  readonly nodeArea: Float32Array;
   readonly anchor: Uint8Array;
   readonly cladding: Uint8Array;
   /** 서 있는 구조에 속하면 1. 떨어져 나간 노드(덩어리/잔해)는 0 */
@@ -98,6 +100,11 @@ export class StructureGraph {
     this.heapPos = new Int32Array(nodeCount);
     this.nodeLoad = new Float64Array(nodeCount);
     this.stamp = new Int32Array(nodeCount);
+    this.nodeArea = new Float32Array(nodeCount);
+    for (const e of edges) {
+      this.nodeArea[e.a]! += e.area;
+      this.nodeArea[e.b]! += e.area;
+    }
 
     this.incidentStart = new Uint32Array(nodeCount + 1);
     for (const e of edges) {
@@ -377,6 +384,18 @@ export class StructureGraph {
       out.push(comp);
     }
     return out;
+  }
+
+  /** 처음 연결 면적 중 아직 살아 있는 비율 (0 = 다 끊김, 1 = 멀쩡) */
+  remainingAreaFraction(i: number): number {
+    const total = this.nodeArea[i]!;
+    if (total <= 0) return 1;
+    let alive = 0;
+    for (let k = this.incidentStart[i]!; k < this.incidentStart[i + 1]!; k++) {
+      const e = this.incident[k]!;
+      if (this.alive[e]) alive += this.area[e]!;
+    }
+    return alive / total;
   }
 
   /** 노드에 붙은 살아 있는 엣지 강도 합 (kg) */

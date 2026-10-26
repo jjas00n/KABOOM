@@ -193,6 +193,10 @@ export const STRUCTURE = {
   chainJoulesPerKg: 0.5,
   chainMinSpeed: 4, // 이보다 느린 충돌은 검사하지 않는다 (m/s)
   wakeMargin: 1, // 덩어리가 떨어질 때 그 AABB + 이 여유 안의 굳은 잔해를 다시 깨운다 (m)
+  // 폭발 반경 × rubbleRange 안에서 처음 연결 면적의 이 비율도 안 남은 조각은 완전히 떼어낸다
+  // (같은 곳을 여러 번 쏘면 거의 다 부서진 잔재가 매달려 다음 포탄을 막지 않게)
+  rubbleFraction: 0.35,
+  rubbleRange: 1.5,
 } as const;
 
 /**

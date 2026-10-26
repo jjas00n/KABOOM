@@ -1,9 +1,10 @@
 // 충돌 지점 기반 엣지 파괴 + 거리 감쇠 임펄스
 // - blastRadius: 운동에너지(J) → 파괴 반경
-// - breakInBlast: 반경 안 구조 엣지를 끊고, 코어 안 조각은 구조에서 떼어낸다 (그래프만 바꾼다)
+// - breakInBlast: 반경 안 구조 엣지를 끊고, 코어 안 조각과 거의 다 끊긴 조각은 구조에서 떼어낸다
+//   (그래프만 바꾼다)
 // - applyExplosion: dynamic 바디에 거리 감쇠 임펄스
 import { Vector3 } from 'three';
-import { EXPLOSION } from '../config';
+import { EXPLOSION, STRUCTURE } from '../config';
 import type { StructureGraph } from '../building/StructureGraph';
 import type { Vec3Like } from '../fracture/polyhedron';
 import type { PhysicsBody } from '../physics/PhysicsWorld';
@@ -79,6 +80,8 @@ export function blastRadius(energy: number): number {
  * 서 있는 구조에 폭발을 적용한다 (그래프만 바꾼다, 물리 전환은 호출 쪽).
  * - 중점이 반경 안인 엣지는 끊는다
  * - 질량중심이 코어(반경 × coreFraction) 안인 조각은 구조에서 떼어낸다
+ * - 반경 × rubbleRange 안에서 처음 연결 면적의 rubbleFraction도 안 남은 조각(거의 다 부서져
+ *   간신히 매달린 조각)도 떼어낸다. 여러 번 맞은 자리에 너덜너덜한 잔재가 남지 않게.
  * positions: 노드 질량중심 xyz 평탄화 (서 있는 노드는 움직이지 않으므로 원래 위치)
  * 반환: 떼어낸 노드
  */
@@ -110,6 +113,17 @@ export function breakInBlast(
     if (!graph.attached[i]) continue;
     const p = i * 3;
     if (dist2(positions[p]!, positions[p + 1]!, positions[p + 2]!) <= core2 && graph.detach(i)) {
+      detached.push(i);
+    }
+  }
+
+  const rubble = radius * STRUCTURE.rubbleRange;
+  const rubble2 = rubble * rubble;
+  for (let i = 0; i < graph.nodeCount; i++) {
+    if (!graph.attached[i] || graph.anchor[i]) continue;
+    const p = i * 3;
+    if (dist2(positions[p]!, positions[p + 1]!, positions[p + 2]!) > rubble2) continue;
+    if (graph.remainingAreaFraction(i) < STRUCTURE.rubbleFraction && graph.detach(i)) {
       detached.push(i);
     }
   }

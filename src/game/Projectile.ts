@@ -5,6 +5,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { Color, Mesh, MeshStandardMaterial, SphereGeometry, Vector3, type Scene } from 'three';
 import type { ChaseTarget } from '../camera/ChaseCam';
 import { CANNON, PROJECTILE, XRAY } from '../config';
+import { PROJECTILE_GROUPS } from '../physics/collisionGroups';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 
 const SPHERE_SEGMENTS = 24;
@@ -91,6 +92,7 @@ export class Projectile implements ChaseTarget {
         .setCcdEnabled(true),
       RAPIER.ColliderDesc.ball(r)
         .setDensity(density)
+        .setCollisionGroups(PROJECTILE_GROUPS) // 잔해는 뚫고 지나간다
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       this.mesh,
     );
@@ -128,7 +130,7 @@ export class Projectile implements ChaseTarget {
       maxDistance + PROJECTILE.radius,
       true,
       undefined,
-      undefined,
+      PROJECTILE_GROUPS, // 포탄이 실제로 부딪히는 것만 (잔해 제외)
       undefined,
       body.rigidBody,
     );
