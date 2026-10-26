@@ -12,7 +12,7 @@ import { DestructionSystem, type DestructionStats } from '../destruction/Destruc
 import { StructureDebug } from '../destruction/StructureDebug';
 import { fractureInWorker } from '../fracture/FractureJob';
 import { MATERIAL, type Fragment } from '../fracture/Fragment';
-import { createFragmentMaterials } from '../fracture/FragmentMeshes';
+import { createFragmentMaterials, type FragmentMaterials } from '../fracture/FragmentMeshes';
 import type { Aabb } from '../fracture/polyhedron';
 import { createRng } from '../fracture/seeds';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
@@ -56,6 +56,16 @@ export class BuildingSite {
     private readonly physics: PhysicsWorld,
     private readonly loading: LoadingOverlay,
   ) {}
+
+  /** 조각 재질 3종 (엑스레이 화면이 잠깐 바꾼다) */
+  get fragmentMaterials(): FragmentMaterials {
+    return this.materials;
+  }
+
+  /** 조각 색을 지금 설정(디버그 색칠 여부)대로 다시 칠한다 */
+  restoreColors(): void {
+    this.system?.fragments.meshes.setDebugColors(this.debugColors, BUILDING_DEMO.debugColorSeed);
+  }
 
   /** 생성이 끝난 건물의 파괴 시스템 (생성 중이면 null) */
   get destruction(): DestructionSystem | null {

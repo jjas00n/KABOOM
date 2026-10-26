@@ -11,6 +11,7 @@ import {
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { LIGHTING, RENDER, SANDBOX } from '../config';
 import type { Renderer } from '../core/Renderer';
+import { XRAY_HIDE } from '../fx/XRayView';
 import type { Vec3Like } from '../fracture/polyhedron';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
 
@@ -39,6 +40,7 @@ export function createStage(renderer: Renderer, physics: PhysicsWorld): void {
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
+  ground.userData[XRAY_HIDE] = true;
   scene.add(ground);
 
   const half = SANDBOX.groundThickness / 2;

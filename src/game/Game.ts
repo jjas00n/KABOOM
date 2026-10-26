@@ -12,19 +12,20 @@ import { CameraRig, type CameraPose } from '../camera/CameraRig';
 import { ChaseCam } from '../camera/ChaseCam';
 import { CutsceneCam } from '../camera/CutsceneCam';
 import { SpectateCam } from '../camera/SpectateCam';
-import { CAMERA, CANNON, HIT_STOP, PROJECTILE, SANDBOX } from '../config';
+import { CAMERA, CANNON, HIT_STOP, PROJECTILE, SANDBOX, XRAY } from '../config';
 import type { Renderer } from '../core/Renderer';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import { createStage } from '../sandbox/Stage';
 import { HUD } from '../ui/HUD';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
 import { muzzleSpeed } from './ballistics';
-import { penetrationBlasts, type Blast } from './penetration';
+import { penetrationBlasts, penetrationDepth, type Blast } from './penetration';
 import { BuildingSite } from './BuildingSite';
 import { Cannon } from './Cannon';
 import { Projectile, type ProjectileHit } from './Projectile';
 import { GameState, StateMachine } from './StateMachine';
 import { TrajectoryLine } from './TrajectoryLine';
+import { XRayKillCam } from './XRayKillCam';
 
 /** hit-stop이 물리 시간을 늦추는 대상 (Loop의 FixedStepper) */
 export interface TimeControl {
@@ -75,6 +76,10 @@ export class Game {
   private readonly blastPoint = new Vector3();
   private hitStopLeft = 0;
   private savedTimeScale = 1;
+  /** 이번 충돌에서 일반 hit-stop을 걸었는지 (킬캠이면 킬캠이 시간을 쥔다) */
+  private hitStopApplied = false;
+  private readonly killCam: XRayKillCam;
+  private readonly flightVelocity = new Vector3();
 
   private readonly keys = new Set<string>();
   private pointer: { x: number; y: number; startX: number; startY: number } | null = null;
@@ -102,6 +107,7 @@ export class Game {
     this.orbit.enableDamping = true;
     this.orbitCam = new SpectateCam(this.orbit);
     this.aimCam = new AimCam(this.cannon);
+    this.killCam = new XRayKillCam(scene, this.rig, time, this.projectile);
     this.hud = new HUD(
       () => this.requestCannon(),
       () => this.requestReset(),
@@ -123,6 +129,7 @@ export class Game {
     this.projectile.step(dt);
     this.stepPenetration(dt);
     if (!this.fsm.is(GameState.PROJECTILE_CAM)) return;
+    if (!this.pendingHit && !this.killCam.active) this.watchForKillShot();
     if (this.pendingHit) {
       this.fsm.transition(GameState.IMPACT);
     } else if (!this.projectile.active || this.projectile.flightTime > PROJECTILE.maxFlightSec) {
@@ -144,10 +151,13 @@ export class Game {
         break;
       case GameState.IMPACT:
         this.hitStopLeft -= dt;
-        // 관통 중이면 다 파고들 때까지 슬로모션을 유지한다
-        if (this.hitStopLeft <= 0 && !this.drilling) this.fsm.transition(GameState.SPECTATE);
+        // 관통 중이면 다 파고들 때까지, 킬캠이면 킬캠이 끝날 때까지 기다린다
+        if (this.hitStopLeft <= 0 && !this.drilling && !this.killCam.active) {
+          this.fsm.transition(GameState.SPECTATE);
+        }
         break;
     }
+    this.killCam.update(dt);
     this.cannon.update(dt);
     this.site.update(dt);
     this.rig.update(dt);
@@ -177,9 +187,11 @@ export class Game {
     fsm.onEnter(GameState.PROJECTILE_CAM, () => this.fire());
     fsm.onEnter(GameState.IMPACT, () => this.enterImpact());
     fsm.onExit(GameState.IMPACT, () => {
-      this.time.timeScale = this.savedTimeScale;
+      if (this.hitStopApplied) this.time.timeScale = this.savedTimeScale;
+      this.hitStopApplied = false;
     });
     fsm.onEnter(GameState.SPECTATE, () => {
+      this.killCam.stop(); // 빗나간 경우 등 안전장치
       this.orbit.enabled = true;
       this.orbitCam.start(this.impactPoint, this.rig.camera.position, {
         radius: CAMERA.spectateRadius,
@@ -248,11 +260,35 @@ export class Game {
     this.drillSpeed = hit.speed;
     const last = this.blasts[this.blasts.length - 1]!.point;
     this.drillDepth = this.drillFrom.distanceTo(last);
+    // 관통하면 엑스레이 킬캠 (비행 중에 미리 시작했을 수도 있다)
+    if (this.blasts.length > 1 && !this.killCam.active) {
+      this.killCam.start(this.site, hit.point, hit.direction, this.drillDepth);
+    }
     this.stepPenetration(0); // 표면 폭발은 즉시
-    this.savedTimeScale = this.time.timeScale;
-    this.time.timeScale = HIT_STOP.timeScale;
-    this.hitStopLeft = HIT_STOP.durationSec;
+    if (this.killCam.active) {
+      this.hitStopLeft = 0; // 시간은 킬캠이 쥔다 (훨씬 느린 슬로모션)
+    } else {
+      this.savedTimeScale = this.time.timeScale;
+      this.time.timeScale = HIT_STOP.timeScale;
+      this.hitStopLeft = HIT_STOP.durationSec;
+      this.hitStopApplied = true;
+    }
     this.rig.shake.add(CAMERA.impactTrauma);
+  }
+
+  /**
+   * 비행 중: 관통할 만큼 강한데 곧(실제 시간 approachRealSec 안에) 건물에 맞을 것 같으면
+   * 맞기 전에 킬캠을 시작해 포탄이 다가가는 모습부터 슬로모션으로 보여준다.
+   */
+  private watchForKillShot(): void {
+    const v = this.projectile.velocity(this.flightVelocity);
+    const speed = v.length();
+    const depth = penetrationDepth(0.5 * PROJECTILE.mass * speed * speed);
+    if (depth <= 0) return;
+    const reach = speed * XRAY.approachRealSec * XRAY.timeScale;
+    const probe = this.projectile.probe(reach, v);
+    if (!probe || !this.site.destruction?.fragments.chunkOfBody(probe.body)) return;
+    this.killCam.start(this.site, probe.point, v.divideScalar(speed), depth);
   }
 
   private onCollision(a: PhysicsBody, b: PhysicsBody): void {
@@ -280,6 +316,7 @@ export class Game {
       this.site.detonate(this.blastPoint.set(b.point.x, b.point.y, b.point.z), b.energy);
       if (this.nextBlast > 1) this.impactPoint.copy(this.blastPoint); // 관람 중심은 가장 깊은 폭발
     }
+    if (!this.drilling) this.killCam.finishDrilling();
     const mesh = this.projectile.mesh;
     mesh.visible = this.drilling;
     if (mesh.visible) {
@@ -407,7 +444,8 @@ export class Game {
 
   /** 클릭 / Space: 컷신 스킵 또는 발사 */
   private onPrimaryAction(): void {
-    if (this.fsm.is(GameState.CANNON_CUTSCENE)) this.skipCutscene();
+    if (this.killCam.active) this.killCam.skip();
+    else if (this.fsm.is(GameState.CANNON_CUTSCENE)) this.skipCutscene();
     else if (this.fsm.is(GameState.AIMING)) this.fsm.transition(GameState.PROJECTILE_CAM);
   }
 }

@@ -4,8 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { CameraRig, type CameraController } from '../src/camera/CameraRig';
 import { ChaseCam, type ChaseTarget } from '../src/camera/ChaseCam';
 import { CutsceneCam } from '../src/camera/CutsceneCam';
+import { KillCam } from '../src/camera/KillCam';
 import { clamp01, easeInOutCubic, easeOutBack, smoothing } from '../src/camera/easing';
-import { CAMERA, CANNON, PENETRATION, PHYSICS, PROJECTILE } from '../src/config';
+import { CAMERA, CANNON, PENETRATION, PHYSICS, PROJECTILE, XRAY } from '../src/config';
 import {
   aimDirection,
   clampAim,
@@ -279,6 +280,30 @@ describe('penetration', () => {
     const down = { x: 0, y: -0.6, z: -0.8 };
     for (const b of penetrationBlasts({ x: 0, y: 2, z: 0 }, down, 3.6e6, 120)) {
       expect(b.point.y).toBeGreaterThanOrEqual(0);
+    }
+  });
+});
+
+describe('KillCam', () => {
+  const shell: ChaseTarget = { active: true, position: new Vector3(0, 10, 5), velocity: (o) => o };
+
+  it('watches the path from the side the camera came from', () => {
+    for (const fromX of [40, -40]) {
+      const cam = new KillCam();
+      const contact = new Vector3(0, 10, 0);
+      const dir = new Vector3(0, 0, -1);
+      cam.start(contact, dir, 6, new Vector3(fromX, 20, 30), shell);
+      const out = { position: new Vector3(), target: new Vector3() };
+      cam.update(0, new PerspectiveCamera(), out);
+      expect(Math.sign(out.position.x)).toBe(Math.sign(fromX)); // 반대편으로 뒤집히지 않는다
+      // 경로 중심에서 대략 camDistance + 깊이/2 떨어져 있다
+      const center = new Vector3(0, 10, -3);
+      const dist = out.position.distanceTo(center);
+      expect(dist).toBeGreaterThan(XRAY.camDistance);
+      expect(dist).toBeLessThan((XRAY.camDistance + 3) * 1.5);
+      // 시선은 경로 중심과 포탄 사이
+      expect(out.target.z).toBeGreaterThan(center.z);
+      expect(out.target.z).toBeLessThan(shell.position.z);
     }
   });
 });

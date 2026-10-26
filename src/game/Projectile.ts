@@ -2,12 +2,15 @@
 // 무겁고 빠르다 (500kg, 40~120m/s). 얇은 유리·패널을 터널링하지 않게 CCD를 켠다.
 // 충돌 판정은 Game이 DestructionSystem.onCollisionStarted로 받아 hit()을 부른다.
 import RAPIER from '@dimforge/rapier3d-compat';
-import { Mesh, MeshStandardMaterial, SphereGeometry, Vector3, type Scene } from 'three';
+import { Color, Mesh, MeshStandardMaterial, SphereGeometry, Vector3, type Scene } from 'three';
 import type { ChaseTarget } from '../camera/ChaseCam';
-import { CANNON, PROJECTILE } from '../config';
+import { CANNON, PROJECTILE, XRAY } from '../config';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 
 const SPHERE_SEGMENTS = 24;
+/** 엑스레이 중 포탄을 건물 위에 그리는 순서 */
+const XRAY_RENDER_ORDER = 3;
+const BLACK = new Color(0, 0, 0);
 
 export interface ProjectileHit {
   point: Vector3;
@@ -18,8 +21,20 @@ export interface ProjectileHit {
   speed: number;
 }
 
+/** 앞쪽 레이 검사 결과 */
+export interface ProjectileProbe {
+  point: Vector3;
+  body: PhysicsBody;
+  /** 포탄 중심에서 맞을 곳까지 거리 */
+  distance: number;
+}
+
 export class Projectile implements ChaseTarget {
   readonly mesh: Mesh;
+  private readonly material: MeshStandardMaterial;
+  /** probe용 재사용 객체 (비행 중 매 스텝 부른다) */
+  private readonly ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
+  private readonly probeDir = new Vector3();
   /** 발사 후 경과 시간 (물리 시간) */
   flightTime = 0;
   private body: PhysicsBody | null = null;
@@ -28,13 +43,14 @@ export class Projectile implements ChaseTarget {
     scene: Scene,
     private readonly physics: PhysicsWorld,
   ) {
+    this.material = new MeshStandardMaterial({
+      color: PROJECTILE.color,
+      metalness: CANNON.metalness,
+      roughness: CANNON.roughness,
+    });
     this.mesh = new Mesh(
       new SphereGeometry(PROJECTILE.radius, SPHERE_SEGMENTS, SPHERE_SEGMENTS / 2),
-      new MeshStandardMaterial({
-        color: PROJECTILE.color,
-        metalness: CANNON.metalness,
-        roughness: CANNON.roughness,
-      }),
+      this.material,
     );
     this.mesh.castShadow = true;
     this.mesh.visible = false;
@@ -93,6 +109,44 @@ export class Projectile implements ChaseTarget {
       energy: 0.5 * body.rigidBody.mass() * speed * speed,
       speed,
     };
+  }
+
+  /**
+   * 진행 방향으로 maxDistance까지 레이를 쏴 처음 맞을 곳 (자기 자신 제외). 없으면 null.
+   * 포탄 반지름만큼 앞당겨 표면에 닿는 지점 기준으로 잰다.
+   */
+  probe(maxDistance: number, velocity: Vector3): ProjectileProbe | null {
+    const body = this.body;
+    if (!body?.alive) return null;
+    const speed = velocity.length();
+    if (speed < 1e-6) return null;
+    const dir = this.probeDir.copy(velocity).divideScalar(speed);
+    this.ray.origin = body.currPos;
+    this.ray.dir = dir;
+    const hit = this.physics.world.castRay(
+      this.ray,
+      maxDistance + PROJECTILE.radius,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      body.rigidBody,
+    );
+    if (!hit) return null;
+    const target = this.physics.getByCollider(hit.collider.handle);
+    if (!target) return null;
+    return {
+      point: body.currPos.clone().addScaledVector(dir, hit.timeOfImpact),
+      body: target,
+      distance: Math.max(hit.timeOfImpact - PROJECTILE.radius, 0),
+    };
+  }
+
+  /** 엑스레이 화면: 밝게 빛나고 건물에 가려지지 않게 맨 위에 그린다 */
+  setGlow(on: boolean): void {
+    this.material.emissive.set(on ? XRAY.shellColor : BLACK);
+    this.material.depthTest = !on;
+    this.mesh.renderOrder = on ? XRAY_RENDER_ORDER : 0;
   }
 
   step(dt: number): void {

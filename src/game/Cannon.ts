@@ -21,6 +21,7 @@ import {
 } from 'three';
 import { CANNON } from '../config';
 import { easeOutBack } from '../camera/easing';
+import { XRAY_HIDE } from '../fx/XRayView';
 import { aimDirection, clampAim } from './ballistics';
 
 const LATHE_SEGMENTS = 40;
@@ -267,6 +268,7 @@ function createHill(x: number, z: number): Mesh {
   hill.position.set(x, 0, z);
   hill.receiveShadow = true;
   hill.castShadow = true;
+  hill.userData[XRAY_HIDE] = true;
   return hill;
 }
 

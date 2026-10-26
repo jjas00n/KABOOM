@@ -229,6 +229,36 @@ export const PENETRATION = {
   spacing: 2, // 안쪽 폭발 사이 간격 (m)
 } as const;
 
+/**
+ * 엑스레이 킬캠 (game/XRayKillCam.ts): 관통할 만큼 강한 포탄이 건물에 맞기 직전부터
+ * 아주 느린 슬로모션 + 건물을 투시해 포탄이 파고드는 과정을 보여준다 (Sniper Elite X-Ray Kill Cam 참고).
+ */
+export const XRAY = {
+  timeScale: 0.03, // 킬캠 중 물리 시간 배속 (일반 hit-stop 0.15보다 5배 느림)
+  approachRealSec: 1, // 충돌 이만큼(실제 시간) 전부터 시작: 레이 길이 = 속도 × 이 값 × timeScale
+  holdSec: 1.2, // 마지막 관통 폭발 뒤 투시 화면을 유지하는 시간 (실제)
+  maxSec: 8, // 킬캠 최대 길이 (실제, 안전장치)
+  skipTimeScale: 1, // 클릭/Space로 건너뛰면 이 배속으로 마저 진행
+  refreshSec: 0.08, // 손상 조각 색을 다시 칠하는 주기 (실제)
+  // 투시 화면 색 (조각별 RGBA)
+  ghostColor: 0x6fb6ff,
+  ghostAlpha: 0.1,
+  glassAlpha: 0.03,
+  hotColor: 0xff9a3c, // 구조에서 떨어져 나간(맞은) 조각
+  hotAlpha: 1,
+  background: 0x07101c,
+  shellColor: 0xffe08a,
+  trailColor: 0xffb347,
+  // 카메라: 관통 경로 옆에서 천천히 돌며 포탄을 따라간다
+  blendSec: 0.5,
+  camDistance: 13, // + 관통 깊이의 절반
+  camHeight: 3,
+  camBehind: 0.35, // 거리 대비 진행 반대쪽으로 물러나는 비율 (포탄이 들어오는 게 보이게)
+  camOrbit: 0.5, // 킬캠 동안 도는 각 (rad)
+  camOrbitSec: 4, // 위 각을 도는 데 걸리는 실제 시간
+  camTrack: 0.6, // 바라보는 점: 경로 중심(0) ↔ 포탄(1)
+} as const;
+
 export const HIT_STOP = {
   timeScale: 0.15,
   durationSec: 0.3,
