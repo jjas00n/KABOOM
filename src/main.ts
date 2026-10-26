@@ -47,6 +47,8 @@ function createBuildingDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
       folder.add({ regenerate: () => demo.reset() }, 'regenerate').name('Regenerate');
       folder.add({ smash: () => demo.smashTest() }, 'smash').name('Smash test');
       folder.add({ pull: () => demo.pullColumns() }, 'pull').name('Pull front columns');
+      folder.add({ smash: () => demo.smashViewed() }, 'smash').name('Smash test (view)');
+      folder.add({ pull: () => demo.pullViewed() }, 'pull').name('Pull columns (view)');
       folder
         .add(demo, 'debugColors')
         .name('Color fragments')
