@@ -7,6 +7,7 @@ import {
   Matrix4,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
+  Vector4,
   type Material,
 } from 'three';
 import { CONCRETE, GLASS } from '../config';
@@ -46,7 +47,8 @@ export function createFragmentMaterials(): FragmentMaterials {
 
 type Part = BufferGeometry | null;
 
-const WHITE = new Color(1, 1, 1);
+/** 인스턴스 색은 RGBA로 쓴다 (엑스레이 화면이 알파를 바꾸므로 되돌릴 때 알파도 1로) */
+const WHITE = new Vector4(1, 1, 1, 1);
 
 export class FragmentMeshes {
   /** 비어 있지 않은 배치만 */
@@ -96,9 +98,11 @@ export class FragmentMeshes {
   setDebugColors(enabled: boolean, seed: number): void {
     const rng = createRng(seed);
     const color = new Color();
+    const rgba = new Vector4();
     for (const slots of this.slots) {
       if (enabled) color.setHSL(rng(), 0.6, 0.55);
-      for (const { batch, id } of slots) batch.setColorAt(id, enabled ? color : WHITE);
+      rgba.set(color.r, color.g, color.b, 1);
+      for (const { batch, id } of slots) batch.setColorAt(id, enabled ? rgba : WHITE);
     }
   }
 
