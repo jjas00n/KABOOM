@@ -36,13 +36,13 @@ describe('fragments as Rapier bodies', () => {
   });
 
   it('total hull mass matches box volume × density once dynamic', () => {
-    for (const b of bodies) b.rigidBody.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    for (const b of bodies) physics.setDynamic(b);
     const mass = bodies.reduce((s, b) => s + b.rigidBody.mass(), 0);
     expect(mass / (8 * CONCRETE.density)).toBeCloseTo(1, 2);
   });
 
   it('explosion pushes dynamic fragments away from the center', () => {
-    for (const b of bodies) b.rigidBody.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    for (const b of bodies) physics.setDynamic(b);
     const center = { x: 0, y: 1, z: 1.5 };
     const before = bodies.map((b) => b.currPos.distanceTo(center));
     const hit = applyExplosion(bodies, center, { radius: 3, peakDeltaV: 10, random: () => 0.5 });
@@ -54,7 +54,7 @@ describe('fragments as Rapier bodies', () => {
 
   it('explosion ignores fixed bodies and bodies outside the radius', () => {
     expect(applyExplosion(bodies, { x: 0, y: 1, z: 0 }, { radius: 3 })).toBe(0);
-    for (const b of bodies) b.rigidBody.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    for (const b of bodies) physics.setDynamic(b);
     expect(applyExplosion(bodies, { x: 100, y: 0, z: 0 }, { radius: 3 })).toBe(0);
   });
 });
