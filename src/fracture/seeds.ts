@@ -36,10 +36,7 @@ export function jitteredGridSeeds(
   const sx = bounds.max.x - bounds.min.x;
   const sy = bounds.max.y - bounds.min.y;
   const sz = bounds.max.z - bounds.min.z;
-  const h = Math.cbrt((sx * sy * sz) / Math.max(count, 1));
-  const nx = Math.max(1, Math.round(sx / h));
-  const ny = Math.max(1, Math.round(sy / h));
-  const nz = Math.max(1, Math.round(sz / h));
+  const [nx, ny, nz] = gridDims([sx, sy, sz], Math.max(count, 1));
   const cx = sx / nx;
   const cy = sy / ny;
   const cz = sz / nz;
@@ -83,6 +80,27 @@ export function adaptiveSeeds(
   // 시도 횟수를 다 쓰면(사실상 없음) 나머지는 균일로 채운다
   for (; made < count; made++) randomPoint(bounds, rng, out, made * 3);
   return out;
+}
+
+/**
+ * 칸 수가 count에 가깝도록 축별 분할 수를 정한다. 얇은 축(칸 크기보다 짧은 축)은 1칸으로 고정하고
+ * 남은 축들로 칸 크기를 다시 계산한다. 그래야 얇은 판(외벽 패널, 유리)에서 개수가 튀지 않는다.
+ */
+function gridDims(sizes: [number, number, number], count: number): [number, number, number] {
+  const dims: [number, number, number] = [0, 0, 0];
+  let active = sizes.map((_, i) => i);
+  for (;;) {
+    const volume = active.reduce((p, i) => p * sizes[i]!, 1);
+    const h = Math.pow(volume / count, 1 / Math.max(active.length, 1));
+    const thin = active.filter((i) => sizes[i]! < h);
+    if (thin.length === 0 || thin.length === active.length) {
+      for (const i of active) dims[i] = Math.max(1, Math.round(sizes[i]! / h));
+      break;
+    }
+    for (const i of thin) dims[i] = 1;
+    active = active.filter((i) => !thin.includes(i));
+  }
+  return dims;
 }
 
 function randomPoint(b: Aabb, rng: Rng, out: Float64Array, o: number): void {
