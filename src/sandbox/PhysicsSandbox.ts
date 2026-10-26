@@ -15,7 +15,7 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import { DEBRIS, SANDBOX } from '../config';
 import type { Renderer } from '../core/Renderer';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
-import { createStage, onCanvasClick } from './Stage';
+import { createOrbitControls, createStage, onCanvasClick } from './Stage';
 
 const HIDDEN = new Matrix4().makeScale(0, 0, 0);
 const IDENTITY_ROT = { x: 0, y: 0, z: 0, w: 1 };
@@ -40,7 +40,8 @@ export class PhysicsSandbox {
     private readonly physics: PhysicsWorld,
   ) {
     const { scene, canvas } = renderer;
-    this.controls = createStage(renderer, physics, SANDBOX.cameraPosition, SANDBOX.cameraTarget);
+    createStage(renderer, physics);
+    this.controls = createOrbitControls(renderer, SANDBOX.cameraPosition, SANDBOX.cameraTarget);
 
     const { x: nx, y: ny, z: nz } = SANDBOX.boxGrid;
     const size = SANDBOX.boxSize;

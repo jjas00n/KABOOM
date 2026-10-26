@@ -49,6 +49,11 @@ export class DestructionSystem {
   /** 굳은 잔해 (구조에 속하지 않는 fixed 덩어리). 근처가 무너지면 다시 깨운다. */
   private readonly frozen = new Set<Chunk>();
   private readonly toShatter: { chunk: Chunk; dv: number }[] = [];
+  /**
+   * 충돌이 시작될 때마다 (연쇄 판정 전에). 충돌 이벤트 큐는 여기서 비우므로
+   * 포탄처럼 다른 쪽에서 충돌을 알아야 하면 이 훅을 쓴다.
+   */
+  onCollisionStarted: ((a: PhysicsBody, b: PhysicsBody) => void) | null = null;
 
   constructor(
     scene: Scene,
@@ -201,6 +206,7 @@ export class DestructionSystem {
       const a = this.physics.getByCollider(e.collider1);
       const b = this.physics.getByCollider(e.collider2);
       if (!a || !b) return;
+      this.onCollisionStarted?.(a, b);
       if (!this.chainCheck(a, b)) this.chainCheck(b, a);
     });
   }

@@ -89,17 +89,62 @@ export const BUILDING = {
   parapetHeight: 1.1,
   parapetThickness: 0.2,
 } as const;
+/** 대포 (game/Cannon.ts). 건물 중심이 원점, 대포는 +z쪽 언덕 위에서 -z(건물)를 향한다. */
 export const CANNON = {
-  yawLimit: Math.PI / 3, // TODO(Phase5)
-  pitchMin: -Math.PI / 36, // TODO(Phase5)
-  pitchMax: Math.PI / 3, // TODO(Phase5)
+  position: { x: 0, z: 62 },
+  hillRadius: 16,
+  hillHeight: 3,
+  // 받침과 포신 (m)
+  baseRadius: 1.7,
+  baseHeight: 1.1,
+  trimHeight: 0.25, // 받침 위 테두리 링 두께
+  pivotHeight: 1.7, // 받침 바닥에서 포신 회전축까지
+  barrelLength: 4.6, // 회전축에서 포구까지
+  barrelRadius: 0.75,
+  breechRadius: 0.95, // 뒤쪽 약실 둥근 부분
+  muzzleFlare: 1.0, // 포구 테두리 반지름
+  boreRadius: 0.5, // 포구 안쪽 구멍 (포탄 반지름보다 커야 함)
+  holeRadius: 2.4, // 대포가 솟아오르는 땅 구멍
+  barrelColor: 0x24242b,
+  baseColor: 0x34343c,
+  trimColor: 0xd8b03a,
+  holeColor: 0x080808,
+  hillColor: 0x5b7f39,
+  metalness: 0.35, // 환경맵이 없어서(Phase 6) 금속도가 높으면 거의 새까맣게 보인다
+  roughness: 0.45,
+  riseDepth: 5, // 등장 전 땅속 깊이
+  riseSec: 1.4,
+  // 조준 각도 (건물 쪽 기본 방향 기준)
+  yawLimit: Math.PI / 3,
+  pitchMin: -Math.PI / 36,
+  pitchMax: Math.PI / 3,
+  startPitch: 0.12, // 컷신 뒤 처음 각도
+  dragSensitivity: 0.004, // 드래그 1px당 회전 (rad)
+  keySpeed: 0.9, // WASD/방향키 회전 속도 (rad/s)
+  wheelPowerStep: 0.05, // 휠 한 칸당 파워 변화 (0~1)
+  keyPowerSpeed: 0.6, // Q/E 파워 변화 속도 (/s)
+  recoilDistance: 0.7, // 발사 반동으로 포신이 밀리는 거리
+  recoilReturnSec: 0.45,
+  smokePuffs: 10,
+  smokeLifeSec: 1.6,
+  smokeSize: 1.4, // 연기 스프라이트 시작 크기 (m), 사는 동안 3배까지 커진다
+  smokeSpeed: 3, // 연기가 포구에서 뿜어지는 속도 (m/s)
 } as const;
 
 export const PROJECTILE = {
-  mass: 500, // TODO(Phase5)
-  radius: 0.4, // TODO(Phase5)
-  muzzleSpeedMin: 40, // TODO(Phase5)
-  muzzleSpeedMax: 120, // TODO(Phase5)
+  mass: 500, // kg
+  radius: 0.4,
+  muzzleSpeedMin: 40, // 파워 0
+  muzzleSpeedMax: 120, // 파워 1
+  defaultPower: 0.45,
+  maxFlightSec: 8, // 이만큼 날아도 아무것도 안 맞으면 빗나간 것으로
+  color: 0x111114,
+  // 예상 궤적 점선
+  trajectoryStepSec: 0.04,
+  trajectoryMaxSec: 4,
+  trajectoryColor: 0xffe28a,
+  trajectoryDashSize: 0.8,
+  trajectoryGapSize: 0.6,
 } as const;
 
 export const EXPLOSION = {
@@ -177,9 +222,37 @@ export const HIT_STOP = {
 } as const;
 
 export const CAMERA = {
+  blendSec: 0.9, // 카메라 컨트롤러가 바뀔 때 이전 자세에서 넘어가는 시간
+  // IDLE: 건물 전경을 천천히 돈다
+  idleRadius: 60,
+  idleHeight: 26,
+  idleSpeed: 0.06, // rad/s
+  // 컷신: 현재 위치 → 건물 전경 → 대포 뒤
   cutsceneDurationSec: 3,
+  cutsceneOverviewRadius: 48, // 건물 전경 지점 (건물 중심에서 거리)
+  cutsceneOverviewHeight: 30,
+  cutsceneSideAngle: 0.9, // 전경 지점을 대포 방향에서 옆으로 돌리는 각 (rad) → 호를 그리며 비행
+  // 조준: 포신 뒤·위 3인칭
+  aimBack: 9.5,
+  aimUp: 4.2,
+  aimAhead: 30,
+  // 체이스: 포탄 뒤·위, 지수 스무딩
+  chaseBack: 9,
+  chaseUp: 3,
+  chaseLead: 12,
+  chaseSmoothing: 0.12, // 시간상수 (s): 작을수록 바짝 따라간다
+  // 관람: 충돌 지점을 천천히 돌다가 궤도 조작으로
   spectateAutoSec: 4,
-  chaseSmoothing: 0.1, // TODO(Phase5)
+  spectateRadius: 30,
+  spectateHeight: 13,
+  spectateSpeed: 0.22, // rad/s
+  // 흔들림 (camera/CameraShake.ts)
+  shakeDecay: 1.4, // trauma 감소 /s
+  shakeMaxOffset: 0.7, // m
+  shakeMaxRoll: 0.035, // rad
+  shakeFrequency: 18, // Hz
+  impactTrauma: 1,
+  fireTrauma: 0.35,
 } as const;
 
 export const RENDER = {

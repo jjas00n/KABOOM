@@ -10,7 +10,7 @@ import { fractureInWorker } from '../fracture/FractureJob';
 import { createFragmentMaterials } from '../fracture/FragmentMeshes';
 import { adaptiveSeeds, createRng, jitteredGridSeeds, uniformSeeds } from '../fracture/seeds';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
-import { createStage, onCanvasClick } from './Stage';
+import { createOrbitControls, createStage, onCanvasClick } from './Stage';
 
 export type SeedMode = 'uniform' | 'jittered' | 'adaptive';
 
@@ -46,9 +46,9 @@ export class FractureDemo {
     private readonly renderer: Renderer,
     private readonly physics: PhysicsWorld,
   ) {
-    this.controls = createStage(
+    createStage(renderer, physics);
+    this.controls = createOrbitControls(
       renderer,
-      physics,
       FRACTURE_DEMO.cameraPosition,
       FRACTURE_DEMO.cameraTarget,
     );

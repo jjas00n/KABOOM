@@ -1,4 +1,4 @@
-// 샌드박스 공용 무대: 배경, 방향광 + 환경광, 지면(시각 + 물리), 임시 OrbitControls
+// 공용 무대: 배경, 방향광 + 환경광, 지면(시각 + 물리). 디버그용 OrbitControls 생성 헬퍼.
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
   Color,
@@ -14,13 +14,8 @@ import type { Renderer } from '../core/Renderer';
 import type { Vec3Like } from '../fracture/polyhedron';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
 
-export function createStage(
-  renderer: Renderer,
-  physics: PhysicsWorld,
-  cameraPosition: Vec3Like,
-  cameraTarget: Vec3Like,
-): OrbitControls {
-  const { scene, camera, canvas } = renderer;
+export function createStage(renderer: Renderer, physics: PhysicsWorld): void {
+  const { scene } = renderer;
   scene.background = new Color(LIGHTING.background);
 
   const sun = new DirectionalLight(LIGHTING.sunColor, LIGHTING.sunIntensity);
@@ -51,7 +46,15 @@ export function createStage(
     RAPIER.RigidBodyDesc.fixed().setTranslation(0, -half, 0),
     RAPIER.ColliderDesc.cuboid(size / 2, half, size / 2),
   );
+}
 
+/** 카메라를 cameraPosition에 두고 cameraTarget을 도는 궤도 컨트롤 (샌드박스용) */
+export function createOrbitControls(
+  renderer: Renderer,
+  cameraPosition: Vec3Like,
+  cameraTarget: Vec3Like,
+): OrbitControls {
+  const { camera, canvas } = renderer;
   camera.position.set(cameraPosition.x, cameraPosition.y, cameraPosition.z);
   const controls = new OrbitControls(camera, canvas);
   controls.target.set(cameraTarget.x, cameraTarget.y, cameraTarget.z);

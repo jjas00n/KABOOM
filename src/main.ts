@@ -1,13 +1,14 @@
-// 진입점: 물리 초기화 → 렌더러 → 씬 → 루프 시작
+// 진입점: 물리 초기화 → 렌더러 → 루프 → 게임(또는 디버그 샌드박스) 시작
 import type GUI from 'lil-gui';
-import { BUILDING, QUALITY_PRESETS } from './config';
 import { FrameTimer } from './core/FrameTimer';
 import { Loop } from './core/Loop';
 import { Renderer } from './core/Renderer';
+import { Game, type TimeControl } from './game/Game';
 import { PhysicsWorld } from './physics/PhysicsWorld';
 import { BuildingDemo } from './sandbox/BuildingDemo';
 import { FractureDemo } from './sandbox/FractureDemo';
 import { PhysicsSandbox } from './sandbox/PhysicsSandbox';
+import { addBuildingGui } from './ui/buildingGui';
 import { DebugGUI } from './ui/DebugGUI';
 import { LoadingOverlay } from './ui/LoadingOverlay';
 
@@ -18,59 +19,50 @@ interface Demo {
   update(dt: number): void;
   reset(): void;
   setupGui?: (gui: GUI) => void;
+  /** 개발 중 콘솔/자동화에서 만질 수 있게 노출할 객체 (window.__kaboom.handle) */
+  handle?: unknown;
 }
 
-/** 기본은 Phase 3 건물. ?sandbox=fracture 면 Phase 2 박스 분할, ?sandbox=physics 면 Phase 1 샌드박스 */
-function createDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
+/**
+ * 기본은 게임. 디버그 샌드박스:
+ * ?sandbox=building (건물 + 클릭 폭발 + 재현 시나리오), fracture (박스 분할), physics (박스 200개)
+ */
+function createDemo(renderer: Renderer, physics: PhysicsWorld, time: TimeControl): Demo {
   const sandbox = new URLSearchParams(window.location.search).get('sandbox');
   if (sandbox === 'physics') return new PhysicsSandbox(renderer, physics);
   if (sandbox === 'fracture') return createFractureDemo(renderer, physics);
-  return createBuildingDemo(renderer, physics);
+  if (sandbox === 'building') return createBuildingDemo(renderer, physics);
+  return createGame(renderer, physics, time);
+}
+
+function createGame(renderer: Renderer, physics: PhysicsWorld, time: TimeControl): Demo {
+  const game = new Game(renderer, physics, time, new LoadingOverlay());
+  return {
+    step: (dt) => game.step(dt),
+    update: (dt) => game.update(dt),
+    reset: () => game.reset(),
+    handle: game,
+    setupGui: (gui) => {
+      const folder = gui.addFolder('Game');
+      folder.add(game, 'state').name('State').disable().listen();
+      folder.add(game, 'power', 0, 1, 0.01).name('Power').listen();
+      addBuildingGui(gui, game.site, () => game.reset());
+    },
+  };
 }
 
 function createBuildingDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
   const demo = new BuildingDemo(renderer, physics, new LoadingOverlay());
-  const { limits } = BUILDING;
   return {
     step: (dt) => demo.step(dt),
     update: (dt) => demo.update(dt),
     reset: () => demo.reset(),
     setupGui: (gui) => {
-      const folder = gui.addFolder('Building');
-      const s = demo.settings;
-      folder.add(s, 'quality', Object.keys(QUALITY_PRESETS)).name('Quality');
-      folder.add(s, 'floors', ...limits.floors, 1).name('Floors');
-      folder.add(s, 'baysX', ...limits.bays, 1).name('Bays X');
-      folder.add(s, 'baysZ', ...limits.bays, 1).name('Bays Z');
-      folder.add(s, 'windowRatio', ...limits.windowRatio, 0.05).name('Window ratio');
-      folder.add(s, 'seed', 0, 9999, 1).name('Seed');
-      folder.add({ regenerate: () => demo.reset() }, 'regenerate').name('Regenerate');
+      const folder = addBuildingGui(gui, demo.site, () => demo.reset());
       folder.add({ smash: () => demo.smashTest() }, 'smash').name('Smash test');
       folder.add({ pull: () => demo.pullColumns() }, 'pull').name('Pull front columns');
       folder.add({ smash: () => demo.smashViewed() }, 'smash').name('Smash test (view)');
       folder.add({ pull: () => demo.pullViewed() }, 'pull').name('Pull columns (view)');
-      folder
-        .add(demo, 'debugColors')
-        .name('Color fragments')
-        .onChange((v: boolean) => demo.setDebugColors(v));
-      folder.add(demo.stats, 'members').name('Members').disable().listen();
-      folder.add(demo.stats, 'fragments').name('Fragments').disable().listen();
-      folder.add(demo.stats, 'loadMs').name('Load ms').disable().listen();
-
-      const structure = gui.addFolder('Structure');
-      structure
-        .add(demo, 'showGraph')
-        .name('Show graph')
-        .onChange((v: boolean) => demo.setShowGraph(v));
-      structure.add(demo.stats, 'edges').name('Edges').disable().listen();
-      const ds = demo.destructionStats;
-      structure.add(ds, 'overloaded').name('Overloaded edges').disable().listen();
-      structure.add(ds, 'islands').name('Islands').disable().listen();
-      structure.add(ds, 'compounds').name('Falling chunks').disable().listen();
-      structure.add(ds, 'shatters').name('Impact splits').disable().listen();
-      structure.add(ds, 'chainBreaks').name('Chain breaks').disable().listen();
-      structure.add(ds, 'frozen').name('Frozen debris').disable().listen();
-      structure.add(ds, 'fading').name('Fading').disable().listen();
     },
   };
 }
@@ -99,20 +91,21 @@ async function main(): Promise<void> {
 
   const physics = await PhysicsWorld.create();
   const renderer = new Renderer(canvas);
-  const demo = createDemo(renderer, physics);
   const timer = new FrameTimer();
+  // 루프 콜백은 아래에서 만드는 demo를 쓴다 (게임이 hit-stop용으로 loop.stepper를 받아야 해서 루프가 먼저)
+  let demo: Demo | null = null;
 
   const loop = new Loop({
     step: (dt) => {
       const t = performance.now();
       physics.step();
-      demo.step?.(dt);
+      demo?.step?.(dt);
       timer.add('physics', t);
       timer.countStep();
     },
     render: (alpha, realDt) => {
       let t = performance.now();
-      demo.update(realDt);
+      demo?.update(realDt);
       timer.add('update', t);
       t = performance.now();
       physics.sync(alpha);
@@ -124,20 +117,28 @@ async function main(): Promise<void> {
       timer.endFrame(realDt);
     },
   });
+  const active = createDemo(renderer, physics, loop.stepper);
+  demo = active;
 
   const debug = DebugGUI.isEnabled()
     ? new DebugGUI({
         stepper: loop.stepper,
         physics,
         timer,
-        onReset: () => demo.reset(),
-        setup: demo.setupGui,
+        onReset: () => active.reset(),
+        setup: active.setupGui,
       })
     : null;
 
   if (import.meta.env.DEV) {
     // 개발 중 콘솔/자동화 측정용 핸들
-    (window as unknown as { __kaboom: unknown }).__kaboom = { physics, demo, loop, timer };
+    (window as unknown as { __kaboom: unknown }).__kaboom = {
+      physics,
+      demo: active,
+      handle: active.handle,
+      loop,
+      timer,
+    };
   }
 
   loop.start();
