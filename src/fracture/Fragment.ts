@@ -4,6 +4,10 @@ import { FRACTURE } from '../config';
 import { EXTERIOR, uniqueVertices, type Vec3Like } from './polyhedron';
 import type { VoronoiCell } from './voronoi';
 
+/** 조각 재질. 콘크리트는 외면/단면 두 재질로, 유리는 한 재질로 그린다. */
+export const MATERIAL = { concrete: 0, glass: 1 } as const;
+export type MaterialId = (typeof MATERIAL)[keyof typeof MATERIAL];
+
 export interface Fragment {
   /** 월드 좌표 질량중심. 아래 정점 좌표는 전부 이 점 기준 로컬 좌표. */
   centroid: Vec3Like;
@@ -22,6 +26,9 @@ export interface Fragment {
   /** 면을 공유하는 이웃 조각 인덱스와 공유 면적(m^2), 같은 순서 */
   neighbors: Uint32Array;
   neighborAreas: Float32Array;
+  /** 원래 부재(분할 작업) 번호 */
+  member: number;
+  material: MaterialId;
 }
 
 export function buildFragments(
@@ -31,7 +38,12 @@ export function buildFragments(
   return cells.map((cell) => buildFragment(cell, uvScale));
 }
 
-export function buildFragment(cell: VoronoiCell, uvScale: number = FRACTURE.uvScale): Fragment {
+export function buildFragment(
+  cell: VoronoiCell,
+  uvScale: number = FRACTURE.uvScale,
+  member = 0,
+  material: MaterialId = MATERIAL.concrete,
+): Fragment {
   const { poly, centroid: c } = cell;
   // 외부면을 먼저 쌓아 인덱스 범위로 재질 그룹을 나눌 수 있게 한다
   const ordered = [
@@ -112,6 +124,8 @@ export function buildFragment(cell: VoronoiCell, uvScale: number = FRACTURE.uvSc
     hull,
     neighbors,
     neighborAreas,
+    member,
+    material,
   };
 }
 
@@ -129,6 +143,8 @@ export interface PackedFragments {
   hull: Float32Array;
   neighbors: Uint32Array;
   neighborAreas: Float32Array;
+  members: Uint32Array;
+  materials: Uint8Array;
 }
 
 const RANGE_STRIDE = 5;
@@ -147,6 +163,8 @@ export function packFragments(frags: readonly Fragment[]): PackedFragments {
     hull: new Float32Array(sum((f) => f.hull.length)),
     neighbors: new Uint32Array(sum((f) => f.neighbors.length)),
     neighborAreas: new Float32Array(sum((f) => f.neighborAreas.length)),
+    members: Uint32Array.from(frags, (f) => f.member),
+    materials: Uint8Array.from(frags, (f) => f.material),
   };
   let pos = 0;
   let uv = 0;
@@ -207,6 +225,8 @@ export function unpackFragments(p: PackedFragments): Fragment[] {
       hull: p.hull.subarray(hull, hull + hullCount * 3),
       neighbors: p.neighbors.subarray(nb, nb + neighborCount),
       neighborAreas: p.neighborAreas.subarray(nb, nb + neighborCount),
+      member: p.members[i]!,
+      material: p.materials[i]! as MaterialId,
     });
     pos += vertexCount * 3;
     uv += vertexCount * 2;
@@ -229,5 +249,7 @@ export function transferablesOf(p: PackedFragments): ArrayBuffer[] {
     p.hull,
     p.neighbors,
     p.neighborAreas,
+    p.members,
+    p.materials,
   ].map((a) => a.buffer as ArrayBuffer);
 }

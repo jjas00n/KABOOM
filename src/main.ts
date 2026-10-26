@@ -1,24 +1,57 @@
 // 진입점: 물리 초기화 → 렌더러 → 씬 → 루프 시작
 import type GUI from 'lil-gui';
+import { BUILDING, QUALITY_PRESETS } from './config';
 import { Loop } from './core/Loop';
 import { Renderer } from './core/Renderer';
 import { PhysicsWorld } from './physics/PhysicsWorld';
+import { BuildingDemo } from './sandbox/BuildingDemo';
 import { FractureDemo } from './sandbox/FractureDemo';
 import { PhysicsSandbox } from './sandbox/PhysicsSandbox';
 import { DebugGUI } from './ui/DebugGUI';
+import { LoadingOverlay } from './ui/LoadingOverlay';
 
-/** ?sandbox=physics 면 Phase 1 박스 샌드박스, 기본은 Phase 2 분할 데모 */
-function createDemo(
-  renderer: Renderer,
-  physics: PhysicsWorld,
-): {
+interface Demo {
   update(): void;
   reset(): void;
   setupGui?: (gui: GUI) => void;
-} {
-  if (new URLSearchParams(window.location.search).get('sandbox') === 'physics') {
-    return new PhysicsSandbox(renderer, physics);
-  }
+}
+
+/** 기본은 Phase 3 건물. ?sandbox=fracture 면 Phase 2 박스 분할, ?sandbox=physics 면 Phase 1 샌드박스 */
+function createDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
+  const sandbox = new URLSearchParams(window.location.search).get('sandbox');
+  if (sandbox === 'physics') return new PhysicsSandbox(renderer, physics);
+  if (sandbox === 'fracture') return createFractureDemo(renderer, physics);
+  return createBuildingDemo(renderer, physics);
+}
+
+function createBuildingDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
+  const demo = new BuildingDemo(renderer, physics, new LoadingOverlay());
+  const { limits } = BUILDING;
+  return {
+    update: () => demo.update(),
+    reset: () => demo.reset(),
+    setupGui: (gui) => {
+      const folder = gui.addFolder('Building');
+      const s = demo.settings;
+      folder.add(s, 'quality', Object.keys(QUALITY_PRESETS)).name('Quality');
+      folder.add(s, 'floors', ...limits.floors, 1).name('Floors');
+      folder.add(s, 'baysX', ...limits.bays, 1).name('Bays X');
+      folder.add(s, 'baysZ', ...limits.bays, 1).name('Bays Z');
+      folder.add(s, 'windowRatio', ...limits.windowRatio, 0.05).name('Window ratio');
+      folder.add(s, 'seed', 0, 9999, 1).name('Seed');
+      folder.add({ regenerate: () => demo.reset() }, 'regenerate').name('Regenerate');
+      folder
+        .add(demo, 'debugColors')
+        .name('Color fragments')
+        .onChange((v: boolean) => demo.setDebugColors(v));
+      folder.add(demo.stats, 'members').name('Members').disable().listen();
+      folder.add(demo.stats, 'fragments').name('Fragments').disable().listen();
+      folder.add(demo.stats, 'loadMs').name('Load ms').disable().listen();
+    },
+  };
+}
+
+function createFractureDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
   const demo = new FractureDemo(renderer, physics);
   return {
     update: () => demo.update(),

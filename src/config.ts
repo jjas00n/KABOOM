@@ -20,13 +20,17 @@ export const PHYSICS = {
 } as const;
 
 export const FRACTURE = {
-  // 부재별 시드 밀도 (seeds / m^3). 외벽 패널 > 슬래브 > 기둥 순으로 잘게.
-  // TODO(Phase3): 프리셋 목표 조각 수에 맞게 튜닝
+  // 부재별 상대 시드 밀도 (seeds / m^3). 절대값이 아니라 비율로 쓰인다:
+  // 프리셋 목표 조각 수에 맞게 전체를 스케일한다 (building/seedBudget.ts).
+  // 외벽 패널 > 슬래브 > 기둥 순으로 잘게. 유리는 얇아서 부피당 밀도가 아주 높아야 크랙처럼 보인다.
   seedDensity: {
-    wallPanel: 40,
-    slab: 12,
+    foundation: 0.5,
     column: 6,
-    glass: 80,
+    beam: 8,
+    slab: 12,
+    wallPanel: 40,
+    parapet: 30,
+    glass: 400,
   },
   adaptiveSeedRadius: 3, // 이 반경 안에서 시드 밀도가 올라간다
   adaptiveSeedMultiplier: 4, // 중심점에서의 밀도 배수 (반경 끝에서 1배로 선형 감소)
@@ -35,6 +39,7 @@ export const FRACTURE = {
   planeEpsilon: 1e-7, // 반공간 판정 허용 오차 (m)
   weldEpsilon: 1e-6, // 같은 점으로 볼 거리 (m)
   minFaceArea: 1e-8, // 이보다 작은 면은 버린다 (m^2)
+  contactEpsilon: 1e-6, // 부재끼리 맞닿았다고 볼 면 사이 거리 (m)
   uvScale: 0.5, // 텍스처 반복 / m (월드 좌표 평면 투영)
   progressEvery: 64, // 워커가 진행률을 보내는 셀 간격
 } as const;
@@ -49,6 +54,38 @@ export const CONCRETE = {
   friction: 0.8,
 } as const;
 
+export const GLASS = {
+  density: 2500, // kg/m^3 (얇아서 조각은 가볍다)
+  friction: 0.4,
+  color: 0x9fc4d6,
+  roughness: 0.05,
+  metalness: 0,
+  opacity: 0.35,
+} as const;
+
+/** 절차적 건물 기본 파라미터와 부재 치수 (m) */
+export const BUILDING = {
+  floors: 6,
+  baysX: 4,
+  baysZ: 3,
+  floorHeight: 3.5,
+  columnSpacing: 6, // 기둥 중심 간격
+  windowRatio: 0.55, // 창 크기 = 기둥 사이 순 폭/높이 × 이 값 (0이면 창 없음)
+  seed: 1,
+  limits: { floors: [1, 12], bays: [1, 8], windowRatio: [0, 0.8] },
+
+  columnSize: 0.6, // 정사각 단면. panelThickness + beamWidth 이상이어야 외곽 보와 패널이 안 겹친다
+  slabThickness: 0.3,
+  beamWidth: 0.3,
+  beamDepth: 0.5,
+  panelThickness: 0.25,
+  glassThickness: 0.03,
+  sillFraction: 0.45, // 창 아래 벽(창대) 높이 = (순 높이 - 창 높이) × 이 값
+  foundationThickness: 0.6,
+  foundationMargin: 1, // 기초가 건물 외곽보다 튀어나온 폭
+  parapetHeight: 1.1,
+  parapetThickness: 0.2,
+} as const;
 export const CANNON = {
   yawLimit: Math.PI / 3, // TODO(Phase5)
   pitchMin: -Math.PI / 36, // TODO(Phase5)
@@ -112,6 +149,14 @@ export const LIGHTING = {
 
 export const DEBUG = {
   fpsSampleSec: 0.5,
+} as const;
+
+/** Phase 3 건물 데모 (대포가 들어오면 game/으로 이동) */
+export const BUILDING_DEMO = {
+  explosionRadius: 3, // 클릭 지점에서 이 반경 안 조각을 dynamic으로
+  cameraPosition: { x: 38, y: 22, z: 44 },
+  cameraTarget: { x: 0, y: 9, z: 0 },
+  debugColorSeed: 7, // 조각 경계 색칠용 난수 시드
 } as const;
 
 /** Phase 2 분할 데모 전용 (건물이 들어오면 제거) */
