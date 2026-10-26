@@ -1,5 +1,5 @@
-// Phase 3 건물 데모: 절차적 건물 생성 → 부재별 사전 분할(워커) → 조각 렌더 + fixed 바디.
-// 클릭하면 그 주변 조각만 dynamic + 폭발 (지지 상실 연쇄 붕괴는 Phase 4).
+// 건물 데모: 절차적 건물 생성 → 부재별 사전 분할(워커) → 구조 그래프 + 조각 물리.
+// 클릭하면 그 지점에 포탄 1발 상당의 에너지로 폭발 → 지지 잃은 부분이 덩어리로 무너진다.
 import { Raycaster, Vector2, Vector3 } from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
@@ -8,11 +8,17 @@ import {
   type BuildingParams,
 } from '../building/BuildingGenerator';
 import { memberSeeds, seedCountsForPreset } from '../building/seedBudget';
-import { BUILDING, BUILDING_DEMO, DEBRIS, DEFAULT_QUALITY, type QualityPreset } from '../config';
+import {
+  BUILDING,
+  BUILDING_DEMO,
+  DEBRIS,
+  DEFAULT_QUALITY,
+  STRUCTURE,
+  type QualityPreset,
+} from '../config';
 import type { Renderer } from '../core/Renderer';
-import { DebrisManager } from '../destruction/DebrisManager';
-import { applyExplosion } from '../destruction/Explosion';
-import { FragmentSet, hideRemovedFragment } from '../destruction/FragmentSet';
+import { DestructionSystem, type DestructionStats } from '../destruction/DestructionSystem';
+import { StructureDebug } from '../destruction/StructureDebug';
 import { fractureInWorker } from '../fracture/FractureJob';
 import { MATERIAL, type Fragment } from '../fracture/Fragment';
 import { createFragmentMaterials } from '../fracture/FragmentMeshes';
@@ -22,21 +28,33 @@ import type { PhysicsWorld } from '../physics/PhysicsWorld';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
 import { createStage, onCanvasClick } from './Stage';
 
-/** 분할(워커)이 진행률 바에서 차지하는 비율. 나머지는 메시/바디 생성. */
+/** 분할(워커)이 진행률 바에서 차지하는 비율. 나머지는 메시/바디/그래프 생성. */
 const FRACTURE_PROGRESS_SHARE = 0.9;
+const CLADDING: readonly string[] = STRUCTURE.cladding;
 
 export class BuildingDemo {
   readonly settings: BuildingParams & { quality: QualityPreset } = {
     ...DEFAULT_BUILDING,
     quality: DEFAULT_QUALITY,
   };
-  readonly stats = { members: 0, fragments: 0, loadMs: 0 };
+  readonly stats = { members: 0, fragments: 0, edges: 0, loadMs: 0 };
+  /** GUI가 붙잡는 고정 객체. 건물을 새로 만들어도 같은 객체에 값을 복사한다. */
+  readonly destructionStats: DestructionStats = {
+    islands: 0,
+    shatters: 0,
+    chainBreaks: 0,
+    overloaded: 0,
+    compounds: 0,
+    frozen: 0,
+    fading: 0,
+  };
   debugColors = false;
+  showGraph = false;
 
   private readonly controls: OrbitControls;
   private readonly materials = createFragmentMaterials();
-  private fragments: FragmentSet | null = null;
-  private readonly debris: DebrisManager;
+  private destruction: DestructionSystem | null = null;
+  private graphDebug: StructureDebug | null = null;
   private footprint: Aabb | null = null;
   /** reset이 겹쳐 들어오면 늦게 끝난 이전 생성 결과를 버리기 위한 세대 번호 */
   private generation = 0;
@@ -56,7 +74,6 @@ export class BuildingDemo {
       BUILDING_DEMO.cameraPosition,
       BUILDING_DEMO.cameraTarget,
     );
-    this.debris = new DebrisManager(physics, hideRemovedFragment);
     onCanvasClick(renderer.canvas, (x, y) => {
       this.pointer.set(x, y);
       this.explodeAtPointer();
@@ -66,12 +83,17 @@ export class BuildingDemo {
 
   /** 고정 timestep마다 (물리 스텝 직후) */
   step(dt: number): void {
-    this.debris.step(dt);
+    this.destruction?.step(dt);
   }
 
-  update(): void {
+  update(dt: number): void {
     this.controls.update();
-    this.physics.removeBelow(DEBRIS.killY, hideRemovedFragment);
+    const d = this.destruction;
+    if (!d) return;
+    this.physics.removeBelow(DEBRIS.killY, (body) => d.forget(body));
+    d.update(dt);
+    Object.assign(this.destructionStats, d.stats);
+    this.graphDebug?.update(dt);
   }
 
   /** 현재 설정으로 건물을 새로 생성한다 */
@@ -84,14 +106,20 @@ export class BuildingDemo {
 
   setDebugColors(enabled: boolean): void {
     this.debugColors = enabled;
-    this.fragments?.meshes.setDebugColors(enabled, BUILDING_DEMO.debugColorSeed);
+    this.destruction?.fragments.meshes.setDebugColors(enabled, BUILDING_DEMO.debugColorSeed);
+  }
+
+  setShowGraph(enabled: boolean): void {
+    this.showGraph = enabled;
+    this.graphDebug?.setEnabled(enabled);
   }
 
   private async build(): Promise<void> {
     const generation = ++this.generation;
-    this.fragments?.dispose();
-    this.fragments = null;
-    this.debris.clear();
+    this.graphDebug?.dispose();
+    this.graphDebug = null;
+    this.destruction?.dispose();
+    this.destruction = null;
     const started = performance.now();
     this.loading.show('Generating building…');
 
@@ -118,28 +146,36 @@ export class BuildingDemo {
     await nextFrame(); // 진행률 표시가 그려진 뒤 무거운 메인 스레드 작업
     if (generation !== this.generation) return;
 
-    this.fragments = new FragmentSet(this.renderer.scene, this.physics, frags, this.materials, {
-      isAnchor: (i) => members[frags[i]!.member]!.anchor,
-      onActivate: (i, body) => this.debris.add(body, frags[i]!.volume),
-      simpleColliderMaxVolume: volumePercentile(frags, DEBRIS.simpleColliderPercentile),
-    });
+    const member = (i: number) => members[frags[i]!.member]!;
+    const d = new DestructionSystem(
+      this.renderer.scene,
+      this.physics,
+      frags,
+      this.materials,
+      (i) => ({ anchor: member(i).anchor, cladding: CLADDING.includes(member(i).kind) }),
+      volumePercentile(frags, DEBRIS.simpleColliderPercentile),
+    );
+    this.destruction = d;
+    this.graphDebug = new StructureDebug(this.renderer.scene, d.graph, d.positions);
+    this.graphDebug.setEnabled(this.showGraph);
     if (this.debugColors) this.setDebugColors(true);
 
     this.stats.members = members.length;
     this.stats.fragments = frags.length;
+    this.stats.edges = d.graph.edgeCount;
     this.stats.loadMs = Math.round(performance.now() - started);
     this.loading.hide();
   }
 
   /**
-   * 성능 측정용 재현 시나리오: 정면 외벽의 고정된 지점들(칸 중앙 × 층)을 한꺼번에 폭파.
-   * 같은 건물 설정이면 매번 같은 조각이 같은 힘을 받는다.
+   * 성능 측정용 재현 시나리오: 모든 층 정면·오른쪽 외벽 칸 중앙을 한꺼번에 폭파.
+   * 같은 건물 설정이면 매번 같은 결과.
    */
   smashTest(): void {
-    if (!this.fragments || !this.footprint) return;
+    const d = this.destruction;
+    if (!d || !this.footprint) return;
     const { min, max } = this.footprint;
     const { floors, baysX, baysZ, floorHeight } = this.settings;
-    const radius = BUILDING_DEMO.explosionRadius;
     const random = createRng(BUILDING_DEMO.smashSeed);
     const bayX = (max.x - min.x) / baysX;
     const bayZ = (max.z - min.z) / baysZ;
@@ -149,25 +185,32 @@ export class BuildingDemo {
     for (let f = 0; f < floors; f++) {
       const y = BUILDING.foundationThickness + (f + 0.5) * floorHeight;
       for (const [x, z] of points) {
-        this.position.set(x, y, z);
-        this.fragments.activateWithin(this.position, radius);
-        applyExplosion(this.fragments.bodies, this.position, { radius, random });
+        d.detonate(this.position.set(x, y, z), BUILDING_DEMO.smashEnergy, random);
       }
     }
-    this.debris.enforceCap();
+  }
+
+  /** 붕괴 확인 시나리오: 1층 정면 기둥 줄을 작은 폭발로 하나씩 날린다 (정면이 무너져야 한다) */
+  pullColumns(): void {
+    const d = this.destruction;
+    if (!d || !this.footprint) return;
+    const { min, max } = this.footprint;
+    const { baysX, floorHeight } = this.settings;
+    const half = BUILDING.columnSize / 2;
+    const y = BUILDING.foundationThickness + floorHeight * 0.4;
+    for (let i = 0; i <= baysX; i++) {
+      const x = min.x + half + (i * (max.x - min.x - 2 * half)) / baysX;
+      d.detonate(this.position.set(x, y, min.z + half), BUILDING_DEMO.columnEnergy);
+    }
   }
 
   private explodeAtPointer(): void {
-    if (!this.fragments) return;
+    const d = this.destruction;
+    if (!d) return;
     this.raycaster.setFromCamera(this.pointer, this.renderer.camera);
-    const hit = this.fragments.raycast(this.raycaster);
+    const hit = d.fragments.raycast(this.raycaster);
     if (!hit) return;
-
-    this.position.copy(hit.point);
-    const radius = BUILDING_DEMO.explosionRadius;
-    this.fragments.activateWithin(this.position, radius);
-    this.debris.enforceCap();
-    applyExplosion(this.fragments.bodies, this.position, { radius });
+    d.detonate(this.position.copy(hit.point), BUILDING_DEMO.clickEnergy);
   }
 }
 

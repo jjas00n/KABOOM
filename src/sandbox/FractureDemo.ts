@@ -110,7 +110,7 @@ export class FractureDemo {
       this.shattered = true;
       this.fragments.activateAll();
     }
-    applyExplosion(this.fragments.bodies, this.position.copy(hit.point), {
+    applyExplosion(this.fragments.bodies(), this.position.copy(hit.point), {
       radius: FRACTURE_DEMO.explosionRadius,
     });
   }

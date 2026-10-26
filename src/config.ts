@@ -103,11 +103,51 @@ export const PROJECTILE = {
 } as const;
 
 export const EXPLOSION = {
-  radius: 4, // TODO(Phase4)
+  radius: 4, // applyExplosion 기본 반경 (에너지로 반경을 정하지 않을 때)
+  // 에너지(J) → 파괴 반경: radiusPerCubeRootJoule × ∛E, [minRadius, maxRadius]로 자름.
+  // 포탄 500kg × 80m/s (1.6MJ) ≈ 반경 3.5m
+  radiusPerCubeRootJoule: 0.03,
+  minRadius: 1,
+  maxRadius: 8,
+  coreFraction: 0.5, // 반경의 이 비율 안 조각은 구조에서 완전히 떨어져 날아간다 (나머지는 엣지만 끊김)
   peakDeltaV: 14, // 폭심에서 조각이 얻는 속도 (m/s). 임펄스 = 질량 × 이 값 × 감쇠
   upwardBias: 0.3, // 방향 벡터에 더하는 위쪽 성분 (흙먼지처럼 솟구치게)
   spin: 2, // 무작위 회전 임펄스 배수 (rad/s 단위 근사)
-  falloffExponent: 2, // TODO(Phase4)
+  falloffExponent: 2,
+} as const;
+
+/** 구조 무결성 그래프와 붕괴 (building/StructureGraph.ts, destruction/CollapseSolver.ts) */
+export const STRUCTURE = {
+  // 외장재: 구조에 매달려 지지는 받지만 위의 구조를 떠받치지 않는다.
+  // (이게 없으면 1층 기둥을 다 없애도 외벽 패널이 건물 전체를 받쳐 버린다)
+  cladding: ['wallPanel', 'glass', 'parapet'],
+  strengthPerArea: 1e5, // 접촉면 1m²가 버티는 하중 (kg). 기하 기준 강도 (실제 콘크리트의 ~3%: 게임용)
+  materialFactor: { concrete: 1, glass: 0.1 }, // 엣지 강도 = 면적 × strengthPerArea × min(양쪽 계수)
+  jointFactor: 0.5, // 부재 사이 이음매는 부재 안보다 약하다
+  // 멀쩡한 건물에서 계산한 하중 × intactSafety 보다는 항상 강하게: 자중으로는 무너지지 않는다.
+  // 기둥이 빠져 하중이 이 배수 넘게 몰리는 엣지부터 끊긴다.
+  intactSafety: 1.6,
+  failureTime: 0.5, // 과부하율 2배(하중 = 강도 × 2)인 엣지가 끊기기까지 걸리는 시간 (s)
+  // 엣지가 끊길 때마다 지지/하중을 다시 계산하면(≈3ms) 붕괴 중 매 스텝 돌게 된다 → 이 간격으로 묶는다.
+  // 폭발 직후는 force로 즉시 계산.
+  solveIntervalSec: 0.1,
+  // 하중 경로 비용 (엣지 길이 m 기준): 아래로 얹힘 = 길이, 옆 = 길이 × (1 + lateralCost),
+  // 위로 매달림 = + 올라가는 높이 × hangCost, 엣지마다 + hopCost
+  lateralCost: 2,
+  hangCost: 4,
+  hopCost: 0.05,
+  // 캔틸레버 가중: 요구량 = 하중 × (1 + cantileverFactor × 수직 지지까지 수평 거리 m)
+  cantileverFactor: 0.5,
+  // 떨어지는 덩어리가 이만큼 속도가 급변하면(m/s, 한 스텝) 충격으로 보고 약한 내부 엣지부터 끊는다
+  impactSpeedChange: 3,
+  // 충격 속도 변화 Δv에서 엣지가 끊길 조건: Δv > impactBreakSpeed × √(엣지 응력 / strengthPerArea)
+  impactBreakSpeed: 4,
+  minChunkFragments: 3, // 분해 후 이보다 작은 덩어리는 개별 조각으로
+  // 연쇄: 움직이는 조각이 서 있는 조각에 부딪힐 때 운동에너지(J) >
+  // chainJoulesPerKg × 맞은 조각이 버티는 엣지 강도 합(kg) 이면 맞은 조각이 떨어져 나간다
+  chainJoulesPerKg: 0.5,
+  chainMinSpeed: 4, // 이보다 느린 충돌은 검사하지 않는다 (m/s)
+  wakeMargin: 1, // 덩어리가 떨어질 때 그 AABB + 이 여유 안의 굳은 잔해를 다시 깨운다 (m)
 } as const;
 
 /**
@@ -125,7 +165,9 @@ export const DEBRIS = {
   linearDamping: 0.1, // dynamic 조각 감쇠: 구르기/미끄러짐을 빨리 멈추게
   angularDamping: 0.8,
   simpleColliderPercentile: 0.3, // 부피 하위 이 비율의 조각은 cuboid 콜라이더 (0이면 끔)
-  fadeOutSec: 8, // TODO(Phase4)
+  fadeVolume: 0.004, // 굳은 뒤 이보다 작은 조각(m^3, ≈16cm 정육면체)은 페이드아웃
+  fadeOutSec: 8, // 굳고 나서 페이드아웃 시작까지
+  fadeDurationSec: 1, // 작아지며 사라지는 시간
   killY: -20, // 이 높이 아래로 떨어진 조각은 제거
 } as const;
 
@@ -164,11 +206,19 @@ export const LIGHTING = {
 
 export const DEBUG = {
   fpsSampleSec: 0.5,
+  graphRefreshSec: 0.25, // 구조 그래프 시각화 갱신 주기
+  edgeColorIdle: 0x5a6470, // 하중 없는 엣지 (옆 연결 등)
+  edgeColorLow: 0x3cd070, // 하중률 0
+  edgeColorHigh: 0xff3030, // 하중률 1 이상 (곧 끊김)
+  anchorColor: 0x40a0ff,
+  anchorSize: 0.25,
 } as const;
 
 /** Phase 3 건물 데모 (대포가 들어오면 game/으로 이동) */
 export const BUILDING_DEMO = {
-  explosionRadius: 3, // 클릭 지점에서 이 반경 안 조각을 dynamic으로
+  clickEnergy: 1.6e6, // 클릭 폭발 에너지 (J) = 포탄 500kg × 80m/s 상당 → 반경 ≈ 3.5m
+  smashEnergy: 1e6, // Smash test 지점별 에너지 (반경 3m)
+  columnEnergy: 4e4, // Pull columns: 기둥 하나만 날릴 작은 폭발 (반경 ≈ 1m)
   cameraPosition: { x: 38, y: 22, z: 44 },
   cameraTarget: { x: 0, y: 9, z: 0 },
   debugColorSeed: 7, // 조각 경계 색칠용 난수 시드

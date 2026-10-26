@@ -31,6 +31,13 @@ interface Entry {
 
 const velocity = new Vector3();
 
+export interface DebrisHooks {
+  /** 상한 초과로 제거할 때 (렌더 숨기기 + 물리 제거는 호출 쪽 책임) */
+  onRemove: (body: PhysicsBody) => void;
+  /** 정지해 fixed로 굳은 직후 (페이드아웃 예약 등) */
+  onFrozen?: (body: PhysicsBody) => void;
+}
+
 export class DebrisManager {
   /** 매 스텝 순회는 배열로 (이터레이터 할당 없음), 조회는 Map으로. 제거는 swap-remove. */
   private readonly list: Entry[] = [];
@@ -38,8 +45,7 @@ export class DebrisManager {
 
   constructor(
     private readonly physics: PhysicsWorld,
-    /** 상한 초과로 제거되는 조각의 렌더를 숨기는 콜백 */
-    private readonly onRemove: (body: PhysicsBody) => void,
+    private readonly hooks: DebrisHooks,
     private readonly policy: DebrisPolicy = DEBRIS,
   ) {}
 
@@ -102,9 +108,9 @@ export class DebrisManager {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const entry = this.list[i]!;
       if (!victims.has(entry)) continue;
-      this.onRemove(entry.body);
-      this.physics.remove(entry.body);
       this.removeAt(i);
+      this.hooks.onRemove(entry.body);
+      this.physics.remove(entry.body);
     }
     return over;
   }
@@ -115,8 +121,10 @@ export class DebrisManager {
   }
 
   private freezeAt(i: number): void {
-    this.physics.setFixed(this.list[i]!.body);
+    const { body } = this.list[i]!;
+    this.physics.setFixed(body);
     this.removeAt(i);
+    this.hooks.onFrozen?.(body);
   }
 
   private removeAt(i: number): void {

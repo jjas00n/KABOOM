@@ -37,7 +37,7 @@ describe('DebrisManager', () => {
   beforeEach(async () => {
     physics = await PhysicsWorld.create();
     removed = [];
-    debris = new DebrisManager(physics, (b) => removed.push(b), POLICY);
+    debris = new DebrisManager(physics, { onRemove: (b) => removed.push(b) }, POLICY);
     ground();
   });
 

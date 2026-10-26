@@ -14,7 +14,8 @@ import { LoadingOverlay } from './ui/LoadingOverlay';
 interface Demo {
   /** 고정 timestep마다 물리 스텝 직후 */
   step?(dt: number): void;
-  update(): void;
+  /** 렌더 프레임마다 (실제 경과 시간) */
+  update(dt: number): void;
   reset(): void;
   setupGui?: (gui: GUI) => void;
 }
@@ -32,7 +33,7 @@ function createBuildingDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
   const { limits } = BUILDING;
   return {
     step: (dt) => demo.step(dt),
-    update: () => demo.update(),
+    update: (dt) => demo.update(dt),
     reset: () => demo.reset(),
     setupGui: (gui) => {
       const folder = gui.addFolder('Building');
@@ -45,6 +46,7 @@ function createBuildingDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
       folder.add(s, 'seed', 0, 9999, 1).name('Seed');
       folder.add({ regenerate: () => demo.reset() }, 'regenerate').name('Regenerate');
       folder.add({ smash: () => demo.smashTest() }, 'smash').name('Smash test');
+      folder.add({ pull: () => demo.pullColumns() }, 'pull').name('Pull front columns');
       folder
         .add(demo, 'debugColors')
         .name('Color fragments')
@@ -52,6 +54,21 @@ function createBuildingDemo(renderer: Renderer, physics: PhysicsWorld): Demo {
       folder.add(demo.stats, 'members').name('Members').disable().listen();
       folder.add(demo.stats, 'fragments').name('Fragments').disable().listen();
       folder.add(demo.stats, 'loadMs').name('Load ms').disable().listen();
+
+      const structure = gui.addFolder('Structure');
+      structure
+        .add(demo, 'showGraph')
+        .name('Show graph')
+        .onChange((v: boolean) => demo.setShowGraph(v));
+      structure.add(demo.stats, 'edges').name('Edges').disable().listen();
+      const ds = demo.destructionStats;
+      structure.add(ds, 'overloaded').name('Overloaded edges').disable().listen();
+      structure.add(ds, 'islands').name('Islands').disable().listen();
+      structure.add(ds, 'compounds').name('Falling chunks').disable().listen();
+      structure.add(ds, 'shatters').name('Impact splits').disable().listen();
+      structure.add(ds, 'chainBreaks').name('Chain breaks').disable().listen();
+      structure.add(ds, 'frozen').name('Frozen debris').disable().listen();
+      structure.add(ds, 'fading').name('Fading').disable().listen();
     },
   };
 }
@@ -93,7 +110,7 @@ async function main(): Promise<void> {
     },
     render: (alpha, realDt) => {
       let t = performance.now();
-      demo.update();
+      demo.update(realDt);
       timer.add('update', t);
       t = performance.now();
       physics.sync(alpha);

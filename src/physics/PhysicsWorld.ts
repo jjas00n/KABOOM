@@ -10,19 +10,38 @@ export interface BatchSlot {
   id: number;
 }
 
+/** 여러 조각을 한 바디로 묶은 덩어리의 조각 하나: 바디 좌표계 offset 위치에 slots를 그린다 */
+export interface ChunkPart {
+  slots: readonly BatchSlot[];
+  offset: Vector3;
+}
+
 /**
  * 물리 바디가 움직일 렌더 대상. InstancedMesh는 인스턴스 한 칸을 가리킨다.
  * BatchSlot 배열은 재질별로 나뉜 여러 BatchedMesh의 인스턴스를 함께 움직인다(외면 + 단면 등).
+ * parts는 compound 바디(덩어리)의 조각들.
  */
-export type SyncTarget = Object3D | { mesh: InstancedMesh; index: number } | readonly BatchSlot[];
+export type SyncTarget =
+  | Object3D
+  | { mesh: InstancedMesh; index: number }
+  | readonly BatchSlot[]
+  | { parts: readonly ChunkPart[] };
 
 const UNIT_SCALE = new Vector3(1, 1, 1);
 const scratchPos = new Vector3();
 const scratchQuat = new Quaternion();
 const scratchMatrix = new Matrix4();
+const scratchPartPos = new Vector3();
 
 export function isBatchSlots(target: SyncTarget): target is readonly BatchSlot[] {
   return Array.isArray(target);
+}
+
+/** 렌더 대상에 딸린 모든 BatchSlot (숨기기 등) */
+export function forEachSlot(target: SyncTarget | null, fn: (slot: BatchSlot) => void): void {
+  if (!target || target instanceof Object3D) return;
+  if (isBatchSlots(target)) target.forEach(fn);
+  else if ('parts' in target) for (const part of target.parts) part.slots.forEach(fn);
 }
 
 export class PhysicsBody {
@@ -36,12 +55,21 @@ export class PhysicsBody {
   dirty = true;
   /** PhysicsWorld.remove 후 false. 제거된 바디의 rigidBody 핸들은 건드리면 안 된다. */
   alive = true;
+  /**
+   * 마지막 스텝 직전의 선속도. 충돌 이벤트는 솔버가 이미 속도를 바꾼 뒤에 오므로
+   * 충돌 세기(운동에너지)는 이 값으로 판단한다.
+   */
+  readonly preStepVelocity = new Vector3();
+
+  /** 첫 콜라이더 (단일 콜라이더 바디면 유일한 것) */
+  readonly collider: RAPIER.Collider;
 
   constructor(
     readonly rigidBody: RAPIER.RigidBody,
-    readonly collider: RAPIER.Collider,
+    readonly colliders: readonly RAPIER.Collider[],
     readonly target: SyncTarget | null,
   ) {
+    this.collider = colliders[0]!;
     this.snap();
   }
 
@@ -137,12 +165,21 @@ export class PhysicsWorld {
     colliderDesc: RAPIER.ColliderDesc,
     target: SyncTarget | null = null,
   ): PhysicsBody {
+    return this.addCompound(bodyDesc, [colliderDesc], target);
+  }
+
+  /** 콜라이더 여러 개를 단 바디 (덩어리). 콜라이더 위치는 각 desc의 translation(바디 좌표계). */
+  addCompound(
+    bodyDesc: RAPIER.RigidBodyDesc,
+    colliderDescs: readonly RAPIER.ColliderDesc[],
+    target: SyncTarget | null = null,
+  ): PhysicsBody {
     const rigidBody = this.world.createRigidBody(bodyDesc);
-    const collider = this.world.createCollider(colliderDesc, rigidBody);
-    const body = new PhysicsBody(rigidBody, collider, target);
+    const colliders = colliderDescs.map((d) => this.world.createCollider(d, rigidBody));
+    const body = new PhysicsBody(rigidBody, colliders, target);
     this.bodies.add(body);
     if (!rigidBody.isFixed()) this.moving.add(body);
-    this.byCollider.set(collider.handle, body);
+    for (const c of colliders) this.byCollider.set(c.handle, body);
     return body;
   }
 
@@ -151,7 +188,7 @@ export class PhysicsWorld {
     body.alive = false;
     this.moving.delete(body);
     this.settled.delete(body);
-    this.byCollider.delete(body.collider.handle);
+    for (const c of body.colliders) this.byCollider.delete(c.handle);
     this.world.removeRigidBody(body.rigidBody);
   }
 
@@ -187,6 +224,9 @@ export class PhysicsWorld {
 
   /** 고정 timestep 한 번 */
   step(): void {
+    for (const body of this.moving) {
+      if (body.awake) body.rigidBody.linvel(body.preStepVelocity);
+    }
     this.world.step(this.eventQueue);
 
     for (const body of this.moving) {
@@ -233,6 +273,14 @@ export class PhysicsWorld {
     if (target instanceof Object3D) {
       target.position.copy(scratchPos);
       target.quaternion.copy(scratchQuat);
+      return;
+    }
+    if ('parts' in target) {
+      for (const part of target.parts) {
+        scratchPartPos.copy(part.offset).applyQuaternion(scratchQuat).add(scratchPos);
+        scratchMatrix.compose(scratchPartPos, scratchQuat, UNIT_SCALE);
+        for (const slot of part.slots) slot.batch.setMatrixAt(slot.id, scratchMatrix);
+      }
       return;
     }
     scratchMatrix.compose(scratchPos, scratchQuat, UNIT_SCALE);
