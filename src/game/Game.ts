@@ -15,7 +15,17 @@ import { CameraRig, type CameraPose } from '../camera/CameraRig';
 import { ChaseCam } from '../camera/ChaseCam';
 import { CutsceneCam } from '../camera/CutsceneCam';
 import { SpectateCam } from '../camera/SpectateCam';
-import { CAMERA, CANNON, FIRE, FIREBALL, HIT_STOP, PROJECTILE, SANDBOX, XRAY } from '../config';
+import {
+  CAMERA,
+  CANNON,
+  DAMAGE_VISUAL,
+  FIRE,
+  FIREBALL,
+  HIT_STOP,
+  PROJECTILE,
+  SANDBOX,
+  XRAY,
+} from '../config';
 import type { Assets } from '../core/Assets';
 import type { Renderer } from '../core/Renderer';
 import { FireballVisual } from '../fx/FireballVisual';
@@ -377,7 +387,14 @@ export class Game {
     }
     this.fireSpectate = false;
     this.blasts = this.hitBuilding
-      ? penetrationBlasts(hit.point, hit.direction, hit.energy, hit.speed)
+      ? penetrationBlasts(
+          hit.point,
+          hit.direction,
+          hit.energy,
+          hit.speed,
+          0,
+          this.resistanceAt(hit),
+        )
       : [{ point: hit.point, energy: hit.energy, delay: 0 }];
     this.nextBlast = 0;
     this.drillTime = 0;
@@ -398,6 +415,16 @@ export class Game {
     }
     this.rig.shake.add(CAMERA.impactTrauma);
     if (!this.killCam.active) this.postfx.pulse();
+  }
+
+  /** 관통 저항: 맞은 곳과 그 안쪽이 이미 부서져 있을수록 작다 (더 깊이 파고든다) */
+  private resistanceAt(hit: ProjectileHit): number {
+    const d = this.site.destruction;
+    if (!d) return 1;
+    const r = DAMAGE_VISUAL.penetrationSampleRadius;
+    const probe = this.blastPoint.copy(hit.point).addScaledVector(hit.direction, r);
+    const damage = (d.damageNear(hit.point, r) + d.damageNear(probe, r)) / 2;
+    return 1 - DAMAGE_VISUAL.penetrationDamageFactor * damage;
   }
 
   /** 파이어볼: 관통·킬캠 없이 화염 폭발 + 화재, 일반 hit-stop */

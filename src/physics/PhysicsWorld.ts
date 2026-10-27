@@ -3,6 +3,15 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { BatchedMesh, InstancedMesh, Matrix4, Object3D, Quaternion, Vector3 } from 'three';
 import { PHYSICS } from '../config';
 import { CollisionEventQueue } from './CollisionEvents';
+import type { Vec3Like } from '../fracture/polyhedron';
+
+/** 쿼터니언 xyzw */
+interface QuatLike {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}
 
 /** BatchedMesh의 인스턴스 하나 */
 export interface BatchSlot {
@@ -205,6 +214,19 @@ export class PhysicsWorld {
   setFixed(body: PhysicsBody): void {
     if (!this.moving.delete(body)) return;
     body.rigidBody.setBodyType(RAPIER.RigidBodyType.Fixed, false);
+    body.snap();
+    body.awake = false;
+    this.settled.add(body);
+  }
+
+  /**
+   * fixed 바디를 pos/quat로 순간이동 (손상 외관: 틈·처짐). 콜라이더와 렌더가 같이 옮겨진다.
+   * 움직이는 바디는 무시 (물리가 위치를 쥐고 있다).
+   */
+  teleport(body: PhysicsBody, pos: Vec3Like, quat: QuatLike): void {
+    if (!this.bodies.has(body) || this.moving.has(body)) return;
+    body.rigidBody.setTranslation(pos, false);
+    body.rigidBody.setRotation(quat, false);
     body.snap();
     body.awake = false;
     this.settled.add(body);
