@@ -14,7 +14,7 @@ import { DEBRIS_GROUPS } from '../physics/collisionGroups';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import { CollapseSolver, type CollapseEvents } from './CollapseSolver';
 import { DebrisManager } from './DebrisManager';
-import { applyExplosion, blastRadius, breakInBlast } from './Explosion';
+import { applyExplosion, blastRadius, breakInBlast, type BlastShape } from './Explosion';
 import { FragmentSet, type Chunk } from './FragmentSet';
 
 export interface DestructionStats {
@@ -25,6 +25,15 @@ export interface DestructionStats {
   compounds: number;
   frozen: number;
   fading: number;
+}
+
+/** 대포 외의 폭발 모양 (화염 폭발). 안 넘기면 대포와 완전히 같은 경로 */
+export interface BlastProfile extends BlastShape {
+  /** 에너지 대신 이 반경을 쓴다 (m) */
+  radius: number;
+  peakDeltaV: number;
+  /** 이 반경 안의 서 있는 유리는 전부 떨어져 나간다 (열 충격) */
+  glassShatterRadius: number;
 }
 
 const velocity = new Vector3();
@@ -88,21 +97,47 @@ export class DestructionSystem {
 
   /**
    * 폭발: 에너지(J)로 반경을 정해 구조를 끊고 조각을 날린다. 섬 판정은 즉시 한 번 돌린다.
+   * profile을 넘기면 그 반경·모양·세기로 (화염 폭발).
    * 반환: 파괴 반경
    */
-  detonate(center: Vec3Like, energy: number, random?: () => number): number {
-    const radius = blastRadius(energy);
-    for (const i of breakInBlast(this.graph, this.positions, center, radius)) {
+  detonate(
+    center: Vec3Like,
+    energy: number,
+    random?: () => number,
+    profile?: BlastProfile,
+  ): number {
+    const radius = profile ? profile.radius : blastRadius(energy);
+    for (const i of breakInBlast(this.graph, this.positions, center, radius, profile)) {
       this.fragments.activate(i);
     }
+    if (profile) this.shatterGlass(center, profile.glassShatterRadius);
     this.wakeFrozen(
       (p) => (p.x - center.x) ** 2 + (p.y - center.y) ** 2 + (p.z - center.z) ** 2 <= radius ** 2,
     );
     this.solver.markDirty();
     this.handleCollapse(this.solver.update(0, true));
-    applyExplosion(this.fragments.bodies(), center, { radius, random });
+    applyExplosion(this.fragments.bodies(), center, {
+      radius,
+      random,
+      peakDeltaV: profile?.peakDeltaV,
+    });
     this.debris.enforceCap();
     return radius;
+  }
+
+  /** 반경 안의 서 있는 유리를 전부 구조에서 떼어낸다 */
+  private shatterGlass(center: Vec3Like, radius: number): void {
+    const r2 = radius * radius;
+    const p = this.positions;
+    const frags = this.fragments.fragments;
+    for (let i = 0; i < this.graph.nodeCount; i++) {
+      if (!this.graph.attached[i] || frags[i]!.material !== MATERIAL.glass) continue;
+      const d2 =
+        (p[i * 3]! - center.x) ** 2 +
+        (p[i * 3 + 1]! - center.y) ** 2 +
+        (p[i * 3 + 2]! - center.z) ** 2;
+      if (d2 <= r2 && this.graph.detach(i)) this.fragments.activate(i);
+    }
   }
 
   /** 고정 timestep마다 (physics.step 직후) */

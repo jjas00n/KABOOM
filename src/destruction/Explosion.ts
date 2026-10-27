@@ -1,7 +1,8 @@
 // 충돌 지점 기반 엣지 파괴 + 거리 감쇠 임펄스
 // - blastRadius: 운동에너지(J) → 파괴 반경
 // - breakInBlast: 반경 안 구조 엣지를 끊고, 코어 안 조각과 거의 다 끊긴 조각은 구조에서 떼어낸다
-//   (그래프만 바꾼다)
+//   (그래프만 바꾼다). BlastShape로 끊는 범위를 반경 대비 비율로 바꿀 수 있다
+//   (대포 = 기본값: 반경 전체 엣지 + 코어 0.5, 화염 폭발 = 넓은 반경에 얕게)
 // - applyExplosion: dynamic 바디에 거리 감쇠 임펄스
 import { Vector3 } from 'three';
 import { EXPLOSION, STRUCTURE } from '../config';
@@ -17,6 +18,19 @@ export interface ExplosionOptions {
   /** 무작위 회전용 난수 [0, 1). 테스트에서 고정하려고 주입 가능. */
   random?: () => number;
 }
+
+/** 반경 대비 파괴 범위 (기본: 대포) */
+export interface BlastShape {
+  /** 질량중심이 반경 × 이 값 안이면 무조건 떼어낸다 */
+  coreFraction: number;
+  /** 중점이 반경 × 이 값 안인 엣지를 끊는다 */
+  edgeFraction: number;
+}
+
+export const DEFAULT_BLAST_SHAPE: BlastShape = {
+  coreFraction: EXPLOSION.coreFraction,
+  edgeFraction: 1,
+};
 
 const dir = new Vector3();
 const impulse = new Vector3();
@@ -90,9 +104,11 @@ export function breakInBlast(
   positions: ArrayLike<number>,
   center: Vec3Like,
   radius: number,
+  shape: BlastShape = DEFAULT_BLAST_SHAPE,
 ): number[] {
-  const r2 = radius * radius;
-  const core = radius * EXPLOSION.coreFraction;
+  const reach = radius * shape.edgeFraction;
+  const r2 = reach * reach;
+  const core = radius * shape.coreFraction;
   const core2 = core * core;
   const dist2 = (x: number, y: number, z: number) =>
     (x - center.x) ** 2 + (y - center.y) ** 2 + (z - center.z) ** 2;
@@ -117,7 +133,7 @@ export function breakInBlast(
     }
   }
 
-  const rubble = radius * STRUCTURE.rubbleRange;
+  const rubble = reach * STRUCTURE.rubbleRange;
   const rubble2 = rubble * rubble;
   for (let i = 0; i < graph.nodeCount; i++) {
     if (!graph.attached[i] || graph.anchor[i]) continue;

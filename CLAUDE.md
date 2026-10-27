@@ -34,12 +34,18 @@
 
 ## 게임 흐름 (상태 머신)
 ```
-IDLE ─[대포 버튼]→ CANNON_CUTSCENE ─(카메라 스플라인 비행 끝)→ AIMING
-AIMING ─[발사]→ PROJECTILE_CAM ─(충돌)→ IMPACT(hit-stop ~0.3s) → SPECTATE
-SPECTATE ─[대포 버튼]→ CANNON_CUTSCENE (부서진 건물에 재발사 가능)
-SPECTATE ─[리셋]→ IDLE (건물 재생성)
+IDLE ─[대포/마법사 버튼]→ CUTSCENE(launcher) ─(카메라 스플라인 비행 끝)→ AIMING
+AIMING ─[발사(마법사는 충전 0.6s 뒤)]→ PROJECTILE_CAM ─(충돌)→ IMPACT(hit-stop ~0.3s) → SPECTATE
+SPECTATE ─[대포/마법사 버튼]→ CUTSCENE (부서진·불타는 건물에 재발사 가능)
+SPECTATE ─[뒤로]→ IDLE (건물 유지),  SPECTATE ─[리셋]→ IDLE (건물 재생성)
 ```
 - 상태 머신은 `src/game/StateMachine.ts` 한 곳에서만 상태를 바꾼다. 카메라·입력·UI는 상태 변경 이벤트를 구독.
+- **발사대(Launcher)**: 대포(`Cannon`)와 파이어볼 마법사(`Wizard`, 건물 기준 대포 반대편 바위 위)가
+  `game/Launcher.ts` 인터페이스를 구현한다. `transition(CUTSCENE, launcherId)`로 상태 머신이 선택도 같이 바꾸고
+  (`fsm.launcher`), 컷신·조준·체이스 카메라는 발사대가 준 스펙(CutsceneSpec/AimCameraSpec/ChaseSpec)을 쓴다.
+- **피해 모델이 다르다**: 대포 = 운동에너지 관통(+엑스레이 킬캠). 파이어볼 = 넓고 얕은 화염 폭발(BlastProfile,
+  반경 안 유리 전부 파손) + **화재**(`destruction/FireSystem.ts`): 구조 그래프 위 heat/fuel/burning/charred,
+  위로 빠르게·아래로 느리게 확산, 타는 조각의 엣지 용량을 깎아 CollapseSolver가 **지연 붕괴**시킨다.
 - 컷신 카메라는 `CatmullRomCurve3` + easing. 스킵(클릭/Space) 가능.
 - AIMING: 대포 포신 뒤 3인칭 or 포신 안 1인칭, 마우스로 yaw/pitch(제한 각도), 휠/키로 파워, 예상 궤적 점선(선택).
 - PROJECTILE_CAM: 발사체 뒤를 따라가는 체이스 캠(약간의 지연/스무딩).
@@ -53,10 +59,12 @@ src/
   physics/     PhysicsWorld(Rapier 래퍼), 충돌 이벤트
   fracture/    voronoi.ts(반공간 클리핑), Fragment.ts, seeds.ts
   building/    BuildingGenerator.ts, members(Column/Slab/WallPanel/Window), StructureGraph.ts
-  destruction/ Explosion.ts(임펄스), CollapseSolver.ts(지지 BFS), DebrisManager.ts(정리/수명)
-  game/        StateMachine.ts, Cannon.ts, Projectile.ts
+  destruction/ Explosion.ts(임펄스·BlastShape), CollapseSolver.ts(지지 BFS), DebrisManager.ts(정리/수명),
+               FireSystem.ts(화재 확산·연소·약화, 순수 로직)
+  game/        StateMachine.ts, Launcher.ts(발사대 인터페이스), Cannon.ts, Wizard.ts, fireball.ts,
+               Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결)
   camera/      CutsceneCam.ts, AimCam.ts, ChaseCam.ts, SpectateCam.ts, CameraShake.ts
-  fx/          Dust.ts, Sparks.ts, PostFX.ts
+  fx/          Dust.ts, Sparks.ts, Fire.ts(불꽃·연기·불씨), FireballVisual.ts, LightPool.ts(고정 개수), PostFX.ts
   ui/          HUD(대포 버튼, 파워 게이지, 리셋, 품질 선택), 디버그 GUI
   audio/       AudioManager.ts
 tests/         vitest 단위 테스트

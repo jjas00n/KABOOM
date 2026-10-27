@@ -1,12 +1,22 @@
-// 건물 → 대포 스플라인 비행 컷신 카메라
+// 건물 → 발사대 스플라인 비행 컷신 카메라
 // 위치: 시작 자세 → 건물 전경(옆으로 비낀 높은 곳) → 조준 카메라 자세, CatmullRom 곡선
-// 바라보는 점: 건물 중심 → 조준 목표로 서서히. easeInOutCubic, 길이 cutsceneDurationSec.
+// 바라보는 점: 건물 중심 → 조준 목표로 서서히. easeInOutCubic, 길이·전경 지점은 발사대별 CutsceneSpec.
 import { CatmullRomCurve3, Vector3, type PerspectiveCamera } from 'three';
 import { CAMERA } from '../config';
+import type { CutsceneSpec } from '../game/Launcher';
 import type { CameraController, CameraPose } from './CameraRig';
 import { clamp01, easeInOutCubic } from './easing';
 
+/** 대포 컷신 (기본값) */
+export const DEFAULT_CUTSCENE: CutsceneSpec = {
+  durationSec: CAMERA.cutsceneDurationSec,
+  overviewRadius: CAMERA.cutsceneOverviewRadius,
+  overviewHeight: CAMERA.cutsceneOverviewHeight,
+  sideAngle: CAMERA.cutsceneSideAngle,
+};
+
 export class CutsceneCam implements CameraController {
+  readonly duration: number;
   private readonly path: CatmullRomCurve3;
   private readonly lookFrom: Vector3;
   private readonly lookTo: Vector3;
@@ -14,20 +24,21 @@ export class CutsceneCam implements CameraController {
 
   /**
    * start: 지금 카메라 위치, buildingCenter: 바라볼 건물 중심,
-   * cannonDir: 건물 → 대포 수평 방향 (전경 지점을 정할 때 쓴다), end: 끝 자세 (= 조준 카메라 자세)
+   * launcherDir: 건물 → 발사대 수평 방향 (전경 지점을 정할 때 쓴다), end: 끝 자세 (= 조준 카메라 자세)
    */
   constructor(
     start: Vector3,
     buildingCenter: Vector3,
-    cannonDir: Vector3,
+    launcherDir: Vector3,
     end: CameraPose,
-    readonly duration: number = CAMERA.cutsceneDurationSec,
+    spec: CutsceneSpec = DEFAULT_CUTSCENE,
   ) {
-    const side = Math.atan2(cannonDir.x, cannonDir.z) + CAMERA.cutsceneSideAngle;
+    this.duration = spec.durationSec;
+    const side = Math.atan2(launcherDir.x, launcherDir.z) + spec.sideAngle;
     const overview = new Vector3(
-      buildingCenter.x + Math.sin(side) * CAMERA.cutsceneOverviewRadius,
-      CAMERA.cutsceneOverviewHeight,
-      buildingCenter.z + Math.cos(side) * CAMERA.cutsceneOverviewRadius,
+      buildingCenter.x + Math.sin(side) * spec.overviewRadius,
+      spec.overviewHeight,
+      buildingCenter.z + Math.cos(side) * spec.overviewRadius,
     );
     this.path = new CatmullRomCurve3(
       [start.clone(), overview, end.position.clone()],

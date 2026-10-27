@@ -39,3 +39,20 @@ export function addBuildingGui(gui: GUI, site: BuildingSite, regenerate: () => v
   structure.add(ds, 'fading').name('Fading').disable().listen();
   return folder;
 }
+
+/** 화재 디버그: heat 히트맵, 확산 배율, 즉시 진화, 타는 조각 수 */
+export function addFireGui(gui: GUI, site: BuildingSite): GUI {
+  const folder = gui.addFolder('Fire');
+  const view = { heatmap: false };
+  folder
+    .add(view, 'heatmap')
+    .name('Heat map')
+    .onChange((v: boolean) => site.setHeatmap(v));
+  folder
+    .add(site, 'spreadMultiplier', 0, 5, 0.1)
+    .name('Spread ×')
+    .onChange((v: number) => site.setSpreadMultiplier(v));
+  folder.add({ extinguish: () => site.extinguish() }, 'extinguish').name('Extinguish');
+  folder.add(site.fireStats, 'burning').name('Burning').disable().listen();
+  return folder;
+}

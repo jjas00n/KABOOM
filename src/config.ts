@@ -183,6 +183,198 @@ export const PROJECTILE = {
   trajectoryGapSize: 0.6,
 } as const;
 
+/** 파이어볼 마법사 (game/Wizard.ts). 오리지널 절차적 디자인: 남색 로브 + 구리 장식 + 지팡이 끝 불씨 구 */
+export const WIZARD = {
+  position: { x: 0, z: -62 }, // 건물 기준 대포(z = +62) 정반대, 같은 거리
+  rockRadius: 3.2,
+  rockHeight: 4.2, // 대포 언덕(3m)보다 살짝 높다
+  rockRoughness: 0.35, // 반경 대비 표면 울퉁불퉁함
+  rockColor: 0x6e6a64,
+  rockSeed: 11,
+  scale: 1.5, // 아래 치수 전체 배율 (멀리서도 보이게 영웅 크기로)
+  robeHeight: 1.5,
+  robeBottomRadius: 0.55,
+  robeTopRadius: 0.2,
+  hemHeight: 0.18, // 로브 아랫단 띠
+  headRadius: 0.17,
+  hatBrimRadius: 0.5,
+  hatBrimThickness: 0.04,
+  hatHeight: 0.85,
+  hatBend: 0.35, // 모자 끝이 뒤로 꺾이는 정도
+  shoulderHeight: 1.38, // 바위 위에서 어깨(팔 회전축)까지 (scale 적용 전)
+  shoulderSide: 0.24, // 오른쪽으로
+  armLength: 0.5,
+  armRadius: 0.075,
+  sleeveRadius: 0.13, // 소매 끝 (나팔 모양)
+  staffLength: 1.9,
+  staffRadius: 0.03,
+  staffGrip: 0.55, // 손에서 지팡이 뒤끝까지
+  orbRadius: 0.11,
+  robeColor: 0x1d2350,
+  robeTrimColor: 0xb87333, // 구리
+  skinColor: 0xd9b48f,
+  hatColor: 0x161a3c,
+  staffColor: 0x4a3426,
+  orbColor: 0xff9a3c,
+  orbBrightness: 6, // HDR (Bloom)
+  orbFlickerHz: 3.1,
+  // 조준
+  yawLimit: Math.PI / 3,
+  pitchMin: -Math.PI / 24,
+  pitchMax: Math.PI / 4,
+  startPitch: 0.05,
+  bodyYawFollow: 0.45, // 몸은 조준 yaw의 이만큼만 돈다 (팔·지팡이는 전부)
+  // 대기 흔들림
+  swayHz: 0.45,
+  swayAngle: 0.035, // rad
+  hatSwayAngle: 0.08,
+  // 등장 (불씨 소용돌이와 함께 0 → 1)
+  appearSec: 1.1,
+  appearEmbers: 40,
+  // 충전 / 발사
+  chargeSec: 0.6,
+  chargeEmbersPerSec: 70,
+  chargeLightIntensity: 120, // 충전 끝 빛 세기 (candela)
+  fireFlashIntensity: 900,
+  fireFlashSec: 0.25,
+  fireTrauma: 0.12, // 대포(0.35)보다 약한 흔들림
+  fireRecoilSec: 0.35, // 팔이 살짝 튀었다 돌아오는 시간
+  // 카메라: 오른쪽 어깨 너머
+  aimBack: 5.5,
+  aimUp: 1.6,
+  aimAhead: 30,
+  aimSide: 1.7,
+  cutsceneDurationSec: 3,
+  cutsceneOverviewRadius: 46,
+  cutsceneOverviewHeight: 26,
+  cutsceneSideAngle: -0.9, // 대포 컷신과 반대쪽으로 호를 그린다
+} as const;
+
+/** 파이어볼 발사체: 가볍고 느리고 거의 직선 */
+export const FIREBALL = {
+  mass: 60, // kg
+  radius: 0.55,
+  speedMin: 25,
+  speedMax: 55,
+  defaultPower: 0.5,
+  gravityScale: 0.15,
+  maxFlightSec: 8,
+  // 비주얼 (fx/FireballVisual.ts)
+  coreColor: 0xffd27a,
+  coreBrightness: 12, // HDR
+  shellColor: 0xff5a14,
+  shellScale: 1.7, // 셸 반경 / 코어 반경
+  shellNoiseScale: 2.2,
+  shellNoiseSpeed: 2.5,
+  shellDisplace: 0.35, // 셸 반경 대비 일렁임
+  shellBrightness: 3,
+  lightColor: 0xff7a2a,
+  lightIntensity: 400, // candela
+  lightDistance: 30,
+  flickerHz: 11,
+  flickerAmount: 0.3,
+  trailFlamesPerSec: 90,
+  trailSmokePerSec: 25,
+  // 체이스 카메라: 대포보다 가깝게
+  chaseBack: 6.5,
+  chaseUp: 2,
+  chaseLead: 10,
+  // 화염 폭발: 넓게, 얕게, 약하게 (BlastProfile)
+  blastRadius: 6,
+  blastCoreFraction: 0.12, // 반경 안쪽 이 비율까지는 무조건 분리 (대포 0.5)
+  blastEdgeFraction: 0.3, // 외벽(클래딩)은 이 비율까지만 떨어져 나간다 (대포 1.0)
+  blastPeakDeltaV: 4, // m/s (대포 14)
+  blastHeat: 1, // 폭심 열 (FIRE.ignitionHeat 넘으면 착화)
+  blastHeatRadius: 7,
+  glassShatterRadius: 7, // 이 안의 유리는 열 충격으로 전부 깨진다
+  flashBrightness: 6,
+  postPulse: 0.45, // 충돌 펄스 세기 (대포 1)
+  impactTrauma: 0.5,
+} as const;
+
+/** 화재 (destruction/FireSystem.ts, fx/Fire.ts) */
+export const FIRE = {
+  tickSec: 0.1, // 화재 계산 주기 (물리 시간)
+  ignitionHeat: 0.55, // 이 heat 이상 + 연료가 있으면 착화
+  maxBurning: 900, // 동시에 타는 조각 상한 (넘으면 새 착화 대기)
+  heatDecay: 0.08, // 안 타는 조각의 heat 식는 속도 (/s)
+  // 확산: 이웃에게 주는 heat/s = rate × 공유면적(m²) 비율 × 배율
+  rateUp: 0.9,
+  rateSide: 0.35,
+  rateDown: 0.08,
+  verticalThreshold: 0.5, // 이웃 방향의 |y| 성분이 이 이상이면 위/아래로 본다
+  slabFactor: 0.25, // 대상이 슬래브(층 경계)면 이 배율 → 다른 층으로는 천천히
+  areaRef: 0.25, // 공유 면적 기준값 (m²): 이 면적이면 rate 그대로
+  spreadMultiplier: 1, // 디버그 배율
+  // 연료 (초 단위 연소 시간 ≈ 연료 / burnRate)
+  burnRate: 1, // 연료 소모 /s
+  fuel: {
+    slab: 9,
+    column: 10,
+    beam: 9,
+    wallPanel: 10,
+    window: 22, // 창대·인방·문설주 (창틀 주변 = 가연물이 많다)
+    parapet: 8,
+    foundation: 0,
+    glass: 0,
+  } as Record<string, number>,
+  fuelJitter: 0.35, // 조각마다 ± 비율
+  charRate: 0.12, // 타는 동안 charred 증가 /s
+  // 구조 약화: 타는 조각에 붙은 엣지 용량이 초당 이 비율씩 줄어든다
+  weakenRate: 0.1,
+  minStrength: 0.12, // 원래 용량 대비 하한
+  // 떨어져 나간 조각
+  settledBurnRate: 4, // 굳은 조각은 연료를 이 배수로 빨리 태워 꺼진다
+  // 대포 폭발 반경 안에 타는 조각이 있으면 주변에 열 추가 (불씨가 튐)
+  cannonEmberHeat: 0.6,
+  cannonEmberRadius: 5,
+  // 비주얼
+  sampleEmitters: 40, // 틱마다 불꽃을 뿜는 burning 조각 수
+  flamesPerEmitter: 1,
+  smokeEvery: 3, // 이 틱마다 한 번 연기
+  maxFlames: 1500,
+  maxSmoke: 600,
+  maxEmbers: 800,
+  flameLifeSec: 0.9,
+  flameSize: 1.1,
+  flameRise: 2.6,
+  flameColor: 0xff8a2a,
+  flameBrightness: 4, // HDR
+  smokeLifeSec: 9,
+  smokeSize: 2.6,
+  smokeRise: 2.2,
+  smokeGrowth: 4,
+  smokeColor: 0x2c2724,
+  smokeOpacity: 0.55,
+  plumePerTick: 2, // 화재 구역 중심의 큰 연기 기둥
+  plumeSize: 5,
+  emberLifeSec: 2.2,
+  emberSize: 0.12,
+  emberSpeed: 2.5,
+  emberColor: 0xffa040,
+  emberBrightness: 8,
+  charTint: { r: 0.2, g: 0.18, b: 0.16 }, // 다 탄(charred = 1) 조각에 곱하는 색
+  crackColor: 0xff5a1a, // 갈라진 틈 불씨 emissive 색
+  emberGlow: 2.2, // 불씨 emissive 세기 (HDR, 1 넘으면 Bloom)
+  emberNoiseScale: 2.5, // 틈 무늬 크기 (/m)
+  // 화재 라이트: burning 조각을 격자로 묶어 가장 큰 구역에
+  lights: 3,
+  lightCell: 4, // m
+  lightIntensity: 160,
+  lightDistance: 18,
+  lightColor: 0xff7a30,
+  lightFlickerHz: 7,
+  // 관람 카메라: 화재 중심을 천천히 따라가며 줌아웃
+  spectateZoomPerSec: 0.06, // 반경·높이 증가율 (/s, 처음 값 대비)
+  spectateZoomMax: 1.8,
+  spectateFollowSec: 1.5, // 중심 추적 스무딩 시간상수
+} as const;
+
+/** 포인트 라이트 풀 (fx/LightPool.ts): 개수가 바뀌면 모든 재질 셰이더가 다시 컴파일되므로 고정 */
+export const LIGHT_POOL = {
+  size: 5,
+} as const;
+
 export const EXPLOSION = {
   radius: 4, // applyExplosion 기본 반경 (에너지로 반경을 정하지 않을 때)
   // 에너지(J) → 파괴 반경: radiusPerCubeRootJoule × ∛E, [minRadius, maxRadius]로 자름.

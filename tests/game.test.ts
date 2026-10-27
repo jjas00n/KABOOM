@@ -20,16 +20,34 @@ import { GameState, StateMachine, TRANSITIONS } from '../src/game/StateMachine';
 import { PhysicsWorld } from '../src/physics/PhysicsWorld';
 
 const dt = PHYSICS.fixedTimestep;
-const { IDLE, CANNON_CUTSCENE, AIMING, PROJECTILE_CAM, IMPACT, SPECTATE } = GameState;
+const { IDLE, CUTSCENE, AIMING, PROJECTILE_CAM, IMPACT, SPECTATE } = GameState;
 
 describe('StateMachine', () => {
   it('follows the CLAUDE.md diagram end to end', () => {
     const fsm = new StateMachine();
-    for (const s of [CANNON_CUTSCENE, AIMING, PROJECTILE_CAM, IMPACT, SPECTATE]) {
+    for (const s of [CUTSCENE, AIMING, PROJECTILE_CAM, IMPACT, SPECTATE]) {
       expect(fsm.transition(s)).toBe(true);
     }
-    expect(fsm.transition(CANNON_CUTSCENE)).toBe(true); // 부서진 건물에 재발사
-    expect(fsm.state).toBe(CANNON_CUTSCENE);
+    expect(fsm.transition(CUTSCENE)).toBe(true); // 부서진 건물에 재발사
+    expect(fsm.state).toBe(CUTSCENE);
+  });
+
+  it('selects the launcher when entering CUTSCENE, keeping it until the next cutscene', () => {
+    const fsm = new StateMachine();
+    expect(fsm.launcher).toBe('cannon');
+    fsm.transition(CUTSCENE, 'wizard');
+    expect(fsm.launcher).toBe('wizard');
+    for (const s of [AIMING, PROJECTILE_CAM, IMPACT, SPECTATE]) fsm.transition(s);
+    expect(fsm.launcher).toBe('wizard');
+    const seen: string[] = [];
+    fsm.onEnter(CUTSCENE, () => seen.push(fsm.launcher)); // onEnter에서 이미 바뀐 값이 보인다
+    fsm.transition(CUTSCENE, 'cannon');
+    expect(seen).toEqual(['cannon']);
+    // 허용 안 된 전이는 선택도 바꾸지 않는다
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(fsm.transition(CUTSCENE, 'wizard')).toBe(false);
+    expect(fsm.launcher).toBe('cannon');
+    warn.mockRestore();
   });
 
   it('allows a miss to skip IMPACT and a reset back to IDLE', () => {
@@ -55,10 +73,10 @@ describe('StateMachine', () => {
     const fsm = new StateMachine();
     const log: string[] = [];
     fsm.onExit(IDLE, () => log.push('exit IDLE'));
-    const off = fsm.onEnter(CANNON_CUTSCENE, (from) => log.push(`enter from ${from}`));
+    const off = fsm.onEnter(CUTSCENE, (from) => log.push(`enter from ${from}`));
     fsm.onChange((from, to) => log.push(`${from}->${to}`));
-    fsm.transition(CANNON_CUTSCENE);
-    expect(log).toEqual(['exit IDLE', 'enter from IDLE', 'IDLE->CANNON_CUTSCENE']);
+    fsm.transition(CUTSCENE);
+    expect(log).toEqual(['exit IDLE', 'enter from IDLE', 'IDLE->CUTSCENE']);
     off();
     const fsm2Log = log.length;
     fsm.transition(AIMING);
