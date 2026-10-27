@@ -38,6 +38,11 @@ export class CollapseSolver {
     this.dirty = true;
   }
 
+  /** 엣지별 누적 손상 (0~1, 1이면 끊김). 읽기 전용으로 쓸 것 */
+  get edgeDamage(): Float32Array {
+    return this.damage;
+  }
+
   /** 엣지 용량이 바뀌었을 때 (지지·하중 재계산 없이 과부하 목록만 갱신) */
   capacityChanged(): void {
     this.capacityDirty = true;

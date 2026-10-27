@@ -46,6 +46,18 @@ SPECTATE ─[뒤로]→ IDLE (건물 유지),  SPECTATE ─[리셋]→ IDLE (건
 - **피해 모델이 다르다**: 대포 = 운동에너지 관통(+엑스레이 킬캠). 파이어볼 = 넓고 얕은 화염 폭발(BlastProfile,
   반경 안 유리 전부 파손) + **화재**(`destruction/FireSystem.ts`): 구조 그래프 위 heat/fuel/burning/charred,
   위로 빠르게·아래로 느리게 확산, 타는 조각의 엣지 용량을 깎아 CollapseSolver가 **지연 붕괴**시킨다.
+
+## 손상 외관과 불변 조건 (논리 상태 = 외관)
+- **보이는 조각은 반드시 맞는다**: 잔해 충돌 그룹(발사체 통과)은 움직이는 동안만. 굳으면(fixed) 기본 그룹.
+- 불변 조건(`destruction/Invariants.ts`, 테스트 + 디버그 GUI 주기 검사):
+  1. 보이는 조각은 콜라이더가 있고, fixed면 발사체와 부딪힌다.
+  2. 그래프에서 떨어진 조각은 반드시 dynamic을 거친다.
+  3. 렌더↔콜라이더 오차 1cm 이하.
+- 조각 damage(0~1, `DamageModel`): 끊긴 연결 면적 + 엣지 누적손상 + 화재 약화.
+  - 서 있는 조각은 손상 자세(틈·처짐·기울어짐)로 **fixed 바디째** 순간이동한다 (`PhysicsWorld.teleport`).
+  - 균열·열화·흔들림은 배치별 DataTexture → 셰이더. 재질·드로우콜은 늘리지 않는다.
+- 너무 약해진 조각은 스텝당 상한까지 떨어뜨린다.
+- 손상된 곳을 맞히면 더 넓게 떨어져 나가고, 관통 저항이 낮아 더 깊이 파인다.
 - 컷신 카메라는 `CatmullRomCurve3` + easing. 스킵(클릭/Space) 가능.
 - AIMING: 대포 포신 뒤 3인칭 or 포신 안 1인칭, 마우스로 yaw/pitch(제한 각도), 휠/키로 파워, 예상 궤적 점선(선택).
 - PROJECTILE_CAM: 발사체 뒤를 따라가는 체이스 캠(약간의 지연/스무딩).
@@ -56,15 +68,16 @@ SPECTATE ─[뒤로]→ IDLE (건물 유지),  SPECTATE ─[리셋]→ IDLE (건
 src/
   main.ts
   core/        Renderer, Loop(고정 timestep 물리 60Hz + 렌더 보간), Assets
-  physics/     PhysicsWorld(Rapier 래퍼), 충돌 이벤트
+  physics/     PhysicsWorld(Rapier 래퍼, teleport), 충돌 이벤트·충돌 그룹, ColliderOverlay(디버그 콜라이더 표시)
   fracture/    voronoi.ts(반공간 클리핑), Fragment.ts, seeds.ts
   building/    BuildingGenerator.ts, members(Column/Slab/WallPanel/Window), StructureGraph.ts
   destruction/ Explosion.ts(임펄스·BlastShape), CollapseSolver.ts(지지 BFS), DebrisManager.ts(정리/수명),
-               FireSystem.ts(화재 확산·연소·약화, 순수 로직)
+               FireSystem.ts(화재 확산·연소·약화, 순수 로직), DamageModel.ts(조각 손상도·자세·느슨 판정),
+               DamageView.ts(손상 자세·텍스처 적용), Invariants.ts(불변 조건)
   game/        StateMachine.ts, Launcher.ts(발사대 인터페이스), Cannon.ts, Wizard.ts, fireball.ts,
                Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결)
   camera/      CutsceneCam.ts, AimCam.ts, ChaseCam.ts, SpectateCam.ts, CameraShake.ts
-  fx/          Dust.ts, Sparks.ts, Fire.ts(불꽃·연기·불씨), FireballVisual.ts, LightPool.ts(고정 개수), PostFX.ts
+  fx/          Dust.ts, Sparks.ts, Fire.ts(불꽃·연기·불씨), FireballVisual.ts, LightPool.ts(고정 개수), Rebar.ts, PostFX.ts
   ui/          HUD(대포 버튼, 파워 게이지, 리셋, 품질 선택), 디버그 GUI
   audio/       AudioManager.ts
 tests/         vitest 단위 테스트
