@@ -69,6 +69,7 @@ export class XRayView {
     if (this.active) return;
     this.active = true;
     this.destruction = destruction;
+    destruction.fragments.meshes.overlay = true; // 화재 색이 투시 색을 덮지 않게 (끌 때 restoreColors가 푼다)
     this.saved = [materials.exterior, materials.interior, materials.glass].map((m) => {
       const s = { material: m, transparent: m.transparent, depthWrite: m.depthWrite };
       m.transparent = true; // 인스턴스 알파를 쓰려면 투명 재질이어야 한다

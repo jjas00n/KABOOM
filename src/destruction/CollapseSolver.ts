@@ -20,6 +20,8 @@ const MAX_PASSES = 8;
 
 export class CollapseSolver {
   private dirty = true;
+  /** 엣지 용량만 바뀜 (화재 약화): 하중은 그대로라 과부하 목록만 다시 만든다 */
+  private capacityDirty = false;
   private sinceSolve = Infinity;
   private readonly damage: Float32Array;
   private overloaded: number[] = [];
@@ -34,6 +36,11 @@ export class CollapseSolver {
   /** 엣지가 끊기거나 노드가 떨어져 나갔을 때 */
   markDirty(): void {
     this.dirty = true;
+  }
+
+  /** 엣지 용량이 바뀌었을 때 (지지·하중 재계산 없이 과부하 목록만 갱신) */
+  capacityChanged(): void {
+    this.capacityDirty = true;
   }
 
   /** 현재 강도를 넘는 엣지 수 (디버그) */
@@ -65,8 +72,9 @@ export class CollapseSolver {
     }
     if (solveNow && this.dirty) g.solveSupport(); // MAX_PASSES를 다 쓴 경우에도 dist는 최신으로
 
-    if (changed) {
-      g.computeLoads();
+    if (changed || this.capacityDirty) {
+      if (changed) g.computeLoads();
+      this.capacityDirty = false;
       this.overloaded = [];
       for (let e = 0; e < g.edgeCount; e++) {
         if (g.alive[e] && g.demand[e]! > g.capacity[e]!) this.overloaded.push(e);

@@ -7,7 +7,7 @@ import {
   type Scene,
   type Vector3,
 } from 'three';
-import { PROJECTILE } from '../config';
+import { PHYSICS, PROJECTILE } from '../config';
 import { simulateTrajectory, trajectoryCapacity } from './ballistics';
 
 export class TrajectoryLine {
@@ -42,7 +42,8 @@ export class TrajectoryLine {
     this.line.visible = v;
   }
 
-  update(origin: Vector3, velocity: Vector3): void {
+  /** gravityScale: 발사체의 중력 배수 (파이어볼은 작다) */
+  update(origin: Vector3, velocity: Vector3, gravityScale = 1): void {
     const p = this.positions;
     const n = simulateTrajectory(
       origin,
@@ -50,6 +51,9 @@ export class TrajectoryLine {
       PROJECTILE.trajectoryStepSec,
       PROJECTILE.trajectoryMaxSec,
       p,
+      0,
+      PHYSICS.fixedTimestep,
+      PHYSICS.gravity.y * gravityScale,
     );
     this.distances[0] = 0;
     for (let i = 1; i < n; i++) {

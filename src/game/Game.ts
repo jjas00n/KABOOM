@@ -1,20 +1,24 @@
-// 게임: 건물 + 대포 + 포탄 + 카메라를 상태 머신(StateMachine)으로 잇는다.
-//   IDLE            건물 전경을 천천히 돈다 (드래그로 둘러보기). [Cannon]
-//   CANNON_CUTSCENE 대포가 솟아오르고 카메라가 건물 → 대포 뒤로 날아간다. 클릭/Space 스킵
+// 게임: 건물 + 발사대(대포·마법사) + 발사체 + 카메라를 상태 머신(StateMachine)으로 잇는다.
+// 모든 단계는 fsm.launcher(지금 고른 발사대) 기준으로 동작한다.
+//   IDLE            건물 전경을 천천히 돈다 (드래그로 둘러보기). [Cannon] [Wizard]
+//   CUTSCENE        발사대가 등장하고 카메라가 건물 → 발사대 뒤로 날아간다. 클릭/Space 스킵
 //   AIMING          드래그/WASD 조준, 휠/QE 파워, 예상 궤적 점선. Space/클릭 발사
+//                   (마법사는 chargeSec 동안 입력을 잠그고 충전한 뒤 발사)
 //   PROJECTILE_CAM  체이스 캠. 처음 부딪힌 곳에서 IMPACT (아무것도 안 맞으면 SPECTATE)
-//   IMPACT          폭발 + hit-stop(시간 느리게) + 카메라 흔들림
-//   SPECTATE        충돌 지점 자동 회전 → 자유 관람. [Cannon] 재발사 / [Reset] 건물 재생성
-import { Vector3 } from 'three';
+//   IMPACT          대포: 관통 폭발(+킬캠), 파이어볼: 화염 폭발 + 화재. hit-stop + 흔들림
+//   SPECTATE        충돌 지점 자동 회전 → 자유 관람 (화재면 불 중심을 따라 줌아웃).
+//                   [Cannon]/[Wizard] 재발사 / [Back] 처음 화면 / [Reset] 건물 재생성
+import { Vector3, type PointLight } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AimCam } from '../camera/AimCam';
 import { CameraRig, type CameraPose } from '../camera/CameraRig';
 import { ChaseCam } from '../camera/ChaseCam';
 import { CutsceneCam } from '../camera/CutsceneCam';
 import { SpectateCam } from '../camera/SpectateCam';
-import { CAMERA, CANNON, HIT_STOP, PROJECTILE, SANDBOX, XRAY } from '../config';
+import { CAMERA, CANNON, FIRE, FIREBALL, HIT_STOP, PROJECTILE, SANDBOX, XRAY } from '../config';
 import type { Assets } from '../core/Assets';
 import type { Renderer } from '../core/Renderer';
+import { FireballVisual } from '../fx/FireballVisual';
 import type { PostFX } from '../fx/PostFX';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import { Stage } from '../sandbox/Stage';
@@ -24,9 +28,12 @@ import { muzzleSpeed } from './ballistics';
 import { penetrationBlasts, penetrationDepth, type Blast } from './penetration';
 import { BuildingSite } from './BuildingSite';
 import { Cannon } from './Cannon';
+import { FIREBALL_SPEC } from './fireball';
+import type { Launcher, LauncherId } from './Launcher';
 import { Projectile, type ProjectileHit } from './Projectile';
 import { GameState, StateMachine } from './StateMachine';
 import { TrajectoryLine } from './TrajectoryLine';
+import { Wizard } from './Wizard';
 import { XRayKillCam } from './XRayKillCam';
 
 /** hit-stop이 물리 시간을 늦추는 대상 (Loop의 FixedStepper) */
@@ -47,14 +54,15 @@ export class Game {
   readonly site: BuildingSite;
   readonly fsm = new StateMachine(GameState.IDLE);
   readonly rig: CameraRig;
-  readonly cannon: Cannon;
-  readonly projectile: Projectile;
+  readonly launchers: Record<LauncherId, Launcher>;
   readonly stage: Stage;
-  /** 파워 0~1 */
-  power: number = PROJECTILE.defaultPower;
-  /** 건물이 준비됐는지 (생성 중엔 대포 못 씀) */
+  /** 건물이 준비됐는지 (생성 중엔 발사대 못 씀) */
   ready = false;
 
+  /** 발사대별 발사체 (대포탄 / 파이어볼) */
+  private readonly projectiles: Record<LauncherId, Projectile>;
+  /** 발사대별 파워 0~1 (디버그 GUI도 바꾼다) */
+  readonly powers: Record<LauncherId, number>;
   private readonly hud: HUD;
   private readonly postfx: PostFX;
   private readonly orbit: OrbitControls;
@@ -85,6 +93,18 @@ export class Game {
   private readonly killCam: XRayKillCam;
   private readonly flightVelocity = new Vector3();
 
+  private readonly fireballVisual: FireballVisual;
+  /** 파이어볼을 따라다니는 라이트 (풀에서 빌림) */
+  private fireballLight: PointLight | null = null;
+  /** 충전 남은 시간 (s). 음수면 충전 중 아님 */
+  private chargeLeft = -1;
+  /** 마지막 충돌이 파이어볼이었는지 (관람 카메라가 불을 따라간다) */
+  private fireSpectate = false;
+  /** 파이어볼 꼬리 불꽃 방출 누적 */
+  private trailAcc = 0;
+  /** 실제 경과 시간 (셰이더 일렁임·깜빡임) */
+  private clock = 0;
+
   private readonly keys = new Set<string>();
   private pointer: { x: number; y: number; startX: number; startY: number } | null = null;
   private readonly muzzle = new Vector3();
@@ -102,8 +122,17 @@ export class Game {
     this.postfx = renderer.postfx;
     this.stage = new Stage(renderer, physics, assets);
     this.site = new BuildingSite(scene, physics, loading, assets, this.stage.ground, time);
-    this.cannon = new Cannon(scene, this.buildingCenter);
-    this.projectile = new Projectile(scene, physics);
+    const cannon = new Cannon(scene, this.buildingCenter);
+    const wizard = new Wizard(scene, this.buildingCenter, this.site.effects.fire, this.site.lights);
+    this.launchers = { cannon, wizard };
+    this.powers = { cannon: cannon.power.defaultPower, wizard: wizard.power.defaultPower };
+    this.fireballVisual = new FireballVisual();
+    scene.add(this.fireballVisual.root);
+    this.fireballVisual.root.visible = false;
+    this.projectiles = {
+      cannon: new Projectile(scene, physics),
+      wizard: new Projectile(scene, physics, FIREBALL_SPEC, this.fireballVisual.root),
+    };
     this.trajectory = new TrajectoryLine(scene);
 
     camera.position.set(0, CAMERA.idleHeight, CAMERA.idleRadius);
@@ -112,10 +141,10 @@ export class Game {
     this.orbit = new OrbitControls(camera, canvas);
     this.orbit.enableDamping = true;
     this.orbitCam = new SpectateCam(this.orbit);
-    this.aimCam = new AimCam(this.cannon);
-    this.killCam = new XRayKillCam(scene, this.rig, time, this.projectile, this.postfx);
+    this.aimCam = new AimCam(cannon);
+    this.killCam = new XRayKillCam(scene, this.rig, time, this.projectiles.cannon, this.postfx);
     this.hud = new HUD(
-      () => this.requestCannon(),
+      (id) => this.requestLauncher(id),
       () => this.requestIdle(),
       () => this.requestReset(),
     );
@@ -130,31 +159,57 @@ export class Game {
     return this.fsm.state;
   }
 
+  /** 지금 고른 발사대 */
+  get launcher(): Launcher {
+    return this.launchers[this.fsm.launcher];
+  }
+
+  /** 지금 고른 발사대의 발사체 */
+  get projectile(): Projectile {
+    return this.projectiles[this.fsm.launcher];
+  }
+
+  private get power(): number {
+    return this.powers[this.fsm.launcher];
+  }
+
   /** 고정 timestep마다 (물리 스텝 직후) */
   step(dt: number): void {
     this.site.step(dt); // 여기서 충돌 이벤트가 처리되며 onCollision이 불린다
     this.projectile.step(dt);
     this.stepPenetration(dt);
     if (!this.fsm.is(GameState.PROJECTILE_CAM)) return;
-    if (!this.pendingHit && !this.killCam.active) this.watchForKillShot();
+    const shell = this.projectile.spec.kind === 'shell';
+    if (shell && !this.pendingHit && !this.killCam.active) this.watchForKillShot();
     if (this.pendingHit) {
       this.fsm.transition(GameState.IMPACT);
-    } else if (!this.projectile.active || this.projectile.flightTime > PROJECTILE.maxFlightSec) {
+    } else if (
+      !this.projectile.active ||
+      this.projectile.flightTime > this.projectile.spec.maxFlightSec
+    ) {
       // 빗나감: 아무것도 안 맞고 날아가 버렸다
       this.impactPoint.copy(this.projectile.position);
       this.projectile.remove();
+      this.releaseFireballLight();
+      this.fireSpectate = false;
       this.fsm.transition(GameState.SPECTATE);
     }
   }
 
   /** 렌더 프레임마다 (실제 경과 시간) */
   update(dt: number): void {
+    this.clock += dt;
     switch (this.fsm.state) {
-      case GameState.CANNON_CUTSCENE:
+      case GameState.CUTSCENE:
         if (this.cutscene?.done) this.fsm.transition(GameState.AIMING);
         break;
       case GameState.AIMING:
-        this.updateAim(dt);
+        if (this.chargeLeft >= 0) {
+          this.chargeLeft -= dt;
+          if (this.chargeLeft < 0) this.fsm.transition(GameState.PROJECTILE_CAM);
+        } else {
+          this.updateAim(dt);
+        }
         break;
       case GameState.IMPACT:
         this.hitStopLeft -= dt;
@@ -165,7 +220,9 @@ export class Game {
         break;
     }
     this.killCam.update(dt);
-    this.cannon.update(dt);
+    this.launchers.cannon.update(dt);
+    this.launchers.wizard.update(dt);
+    this.updateFireball(dt);
     this.site.update(dt);
     this.stage.update(dt, this.site.bounds);
     this.rig.update(dt);
@@ -182,9 +239,10 @@ export class Game {
   private bindStates(): void {
     const { fsm } = this;
     fsm.onEnter(GameState.IDLE, () => this.enterIdle());
-    fsm.onEnter(GameState.CANNON_CUTSCENE, () => this.enterCutscene());
+    fsm.onEnter(GameState.CUTSCENE, () => this.enterCutscene());
     fsm.onEnter(GameState.AIMING, () => {
-      this.cannon.finishRise();
+      this.launcher.finishAppear();
+      this.chargeLeft = -1;
       this.cutscene = null;
       this.trajectory.visible = true;
       this.rig.setController(this.aimCam);
@@ -201,11 +259,17 @@ export class Game {
     fsm.onEnter(GameState.SPECTATE, () => {
       this.killCam.stop(); // 빗나간 경우 등 안전장치
       this.orbit.enabled = true;
+      const fire = this.fireSpectate ? this.site.fire : null;
       this.orbitCam.start(this.impactPoint, this.rig.camera.position, {
         radius: CAMERA.spectateRadius,
         height: CAMERA.spectateHeight,
         speed: CAMERA.spectateSpeed,
-        autoSec: CAMERA.spectateAutoSec,
+        // 화재: 불이 번지는 걸 보도록 더 오래, 불 중심을 따라가며 천천히 줌아웃
+        autoSec: fire ? CAMERA.spectateAutoSec * 2.5 : CAMERA.spectateAutoSec,
+        zoomPerSec: fire ? FIRE.spectateZoomPerSec : 0,
+        zoomMax: FIRE.spectateZoomMax,
+        follow: fire?.center ?? null,
+        followSec: FIRE.spectateFollowSec,
       });
       this.rig.setController(this.orbitCam);
     });
@@ -226,31 +290,80 @@ export class Game {
 
   private enterCutscene(): void {
     this.orbit.enabled = false;
-    this.cannon.rise();
-    const toCannon = new Vector3(
-      CANNON.position.x - this.buildingCenter.x,
+    const launcher = this.launcher;
+    // 발사대는 한 번에 하나만 나와 있다
+    if (launcher !== this.launchers.cannon) this.launchers.cannon.hide();
+    if (launcher !== this.launchers.wizard) this.launchers.wizard.hide();
+    launcher.appear();
+    this.aimCam.launcher = launcher;
+    const toLauncher = new Vector3(
+      launcher.root.position.x - this.buildingCenter.x,
       0,
-      CANNON.position.z - this.buildingCenter.z,
+      launcher.root.position.z - this.buildingCenter.z,
     ).normalize();
     this.cutscene = new CutsceneCam(
       this.rig.camera.position.clone(),
       this.buildingCenter,
-      toCannon,
+      toLauncher,
       this.aimCam.poseFor(this.aimPose),
+      launcher.cutscene,
     );
     this.rig.setController(this.cutscene, 0); // 컷신은 지금 위치에서 출발한다
   }
 
   private fire(): void {
-    const speed = muzzleSpeed(this.power, PROJECTILE.muzzleSpeedMin, PROJECTILE.muzzleSpeedMax);
-    this.cannon.muzzleWorld(this.muzzle);
-    this.cannon.aimDirection(this.launchVelocity).multiplyScalar(speed);
+    const launcher = this.launcher;
+    this.aimLaunch(launcher);
     this.pendingHit = null;
     this.projectile.launch(this.muzzle, this.launchVelocity);
-    this.cannon.fire();
-    this.rig.shake.add(CAMERA.fireTrauma);
-    this.chaseCam.start(this.projectile, this.rig.camera.position);
+    launcher.fire();
+    this.rig.shake.add(launcher.fireTrauma);
+    if (this.projectile.spec.kind === 'fireball') {
+      this.postfx.pulse(FIREBALL.postPulse * 0.5); // 발사 섬광
+      this.trailAcc = 0;
+      this.fireballLight ??= this.site.lights.acquire();
+      if (this.fireballLight) {
+        this.fireballLight.color.set(FIREBALL.lightColor);
+        this.fireballLight.distance = FIREBALL.lightDistance;
+      }
+    }
+    this.chaseCam.start(this.projectile, this.rig.camera.position, launcher.chase);
     this.rig.setController(this.chaseCam, CAMERA.blendSec / 3);
+  }
+
+  /** 발사대의 포구(this.muzzle)와 발사 속도(this.launchVelocity)를 채운다. 반환: 속력 */
+  private aimLaunch(launcher: Launcher): number {
+    const speed = muzzleSpeed(this.power, launcher.power.speedMin, launcher.power.speedMax);
+    launcher.muzzleWorld(this.muzzle);
+    launcher.aimDirection(this.launchVelocity).multiplyScalar(speed);
+    return speed;
+  }
+
+  /** 파이어볼 비행 중: 셸 일렁임, 꼬리 불꽃·연기, 따라다니며 깜빡이는 주황 라이트 */
+  private updateFireball(dt: number): void {
+    const p = this.projectiles.wizard;
+    this.fireballVisual.update(this.clock);
+    if (!p.active) return;
+    const fire = this.site.effects.fire;
+    this.trailAcc += dt * this.time.timeScale * FIREBALL.trailFlamesPerSec;
+    for (; this.trailAcc >= 1; this.trailAcc--) {
+      fire.trail(p.position, FIREBALL.radius * (1.2 + Math.random()));
+      if (Math.random() < FIREBALL.trailSmokePerSec / FIREBALL.trailFlamesPerSec) {
+        fire.smokePuff(p.position, FIRE.smokeSize * 0.5, 0.5);
+      }
+    }
+    const light = this.fireballLight;
+    if (light) {
+      light.position.copy(p.position);
+      const w = this.clock * FIREBALL.flickerHz * Math.PI * 2;
+      light.intensity =
+        FIREBALL.lightIntensity * (1 + FIREBALL.flickerAmount * Math.sin(w) * Math.sin(w * 0.37));
+    }
+  }
+
+  private releaseFireballLight(): void {
+    this.site.lights.release(this.fireballLight);
+    this.fireballLight = null;
   }
 
   private enterImpact(): void {
@@ -258,6 +371,11 @@ export class Game {
     this.pendingHit = null;
     this.impactPoint.copy(hit.point);
     this.projectile.remove();
+    if (this.projectile.spec.kind === 'fireball') {
+      this.enterFireImpact(hit);
+      return;
+    }
+    this.fireSpectate = false;
     this.blasts = this.hitBuilding
       ? penetrationBlasts(hit.point, hit.direction, hit.energy, hit.speed)
       : [{ point: hit.point, energy: hit.energy, delay: 0 }];
@@ -276,13 +394,27 @@ export class Game {
     if (this.killCam.active) {
       this.hitStopLeft = 0; // 시간은 킬캠이 쥔다 (훨씬 느린 슬로모션)
     } else {
-      this.savedTimeScale = this.time.timeScale;
-      this.time.timeScale = HIT_STOP.timeScale;
-      this.hitStopLeft = HIT_STOP.durationSec;
-      this.hitStopApplied = true;
+      this.applyHitStop();
     }
     this.rig.shake.add(CAMERA.impactTrauma);
     if (!this.killCam.active) this.postfx.pulse();
+  }
+
+  /** 파이어볼: 관통·킬캠 없이 화염 폭발 + 화재, 일반 hit-stop */
+  private enterFireImpact(hit: ProjectileHit): void {
+    this.releaseFireballLight();
+    this.fireSpectate = true;
+    this.site.fireBlast(this.blastPoint.copy(hit.point));
+    this.applyHitStop();
+    this.rig.shake.add(FIREBALL.impactTrauma);
+    this.postfx.pulse(FIREBALL.postPulse);
+  }
+
+  private applyHitStop(): void {
+    this.savedTimeScale = this.time.timeScale;
+    this.time.timeScale = HIT_STOP.timeScale;
+    this.hitStopLeft = HIT_STOP.durationSec;
+    this.hitStopApplied = true;
   }
 
   /**
@@ -302,10 +434,11 @@ export class Game {
 
   private onCollision(a: PhysicsBody, b: PhysicsBody): void {
     if (!this.fsm.is(GameState.PROJECTILE_CAM) || this.pendingHit) return;
-    if (!this.projectile.isBody(a) && !this.projectile.isBody(b)) return;
-    const other = this.projectile.isBody(a) ? b : a;
+    const projectile = this.projectile;
+    if (!projectile.isBody(a) && !projectile.isBody(b)) return;
+    const other = projectile.isBody(a) ? b : a;
     this.hitBuilding = this.site.destruction?.fragments.chunkOfBody(other) !== undefined;
-    this.pendingHit = this.projectile.impact();
+    this.pendingHit = projectile.impact();
   }
 
   /** 관통 경로의 폭발이 남아 있는지 */
@@ -326,7 +459,7 @@ export class Game {
       if (this.nextBlast > 1) this.impactPoint.copy(this.blastPoint); // 관람 중심은 가장 깊은 폭발
     }
     if (!this.drilling) this.killCam.finishDrilling();
-    const mesh = this.projectile.mesh;
+    const mesh = this.projectiles.cannon.mesh;
     mesh.visible = this.drilling;
     if (mesh.visible) {
       const d = Math.min(this.drillTime * this.drillSpeed, this.drillDepth);
@@ -334,16 +467,16 @@ export class Game {
     }
   }
 
-  private requestCannon(): void {
+  private requestLauncher(id: LauncherId): void {
     if (this.ready && this.fsm.is(GameState.IDLE, GameState.SPECTATE)) {
-      this.fsm.transition(GameState.CANNON_CUTSCENE);
+      this.fsm.transition(GameState.CUTSCENE, id);
     }
   }
 
-  /** 관람 → 처음 화면(IDLE). 부서진 건물은 그대로 두고 대포만 다시 땅속으로 */
+  /** 관람 → 처음 화면(IDLE). 부서진 건물(과 불)은 그대로 두고 발사대만 숨긴다 */
   private requestIdle(): void {
     if (!this.fsm.is(GameState.SPECTATE)) return;
-    this.cannon.lower();
+    this.hideLaunchers();
     this.fsm.transition(GameState.IDLE);
   }
 
@@ -353,15 +486,20 @@ export class Game {
     this.rebuild();
   }
 
+  private hideLaunchers(): void {
+    this.launchers.cannon.hide();
+    this.launchers.wizard.hide();
+  }
+
   private skipCutscene(): void {
-    this.cannon.finishRise();
+    this.launcher.finishAppear();
     this.fsm.transition(GameState.AIMING);
   }
 
   /** 건물 재생성. 끝나면 ready + 충돌 훅 연결 + 카메라 중심 갱신 */
   private rebuild(): void {
     this.ready = false;
-    this.cannon.lower();
+    this.hideLaunchers();
     this.hud.setState(this.fsm.state, this.ready);
     void this.site.reset().then((ok) => {
       if (!ok) return;
@@ -384,26 +522,37 @@ export class Game {
 
   private updateAim(dt: number): void {
     const held = (codes: readonly string[]) => codes.some((c) => this.keys.has(c));
-    let { yaw, pitch } = this.cannon;
+    const launcher = this.launcher;
+    let { yaw, pitch } = launcher;
     const turn = CANNON.keySpeed * dt;
-    // 대포 뒤에서 보면 +yaw가 왼쪽
+    // 발사대 뒤에서 보면 +yaw가 왼쪽
     if (held(AIM_KEYS.left)) yaw += turn;
     if (held(AIM_KEYS.right)) yaw -= turn;
     if (held(AIM_KEYS.up)) pitch += turn;
     if (held(AIM_KEYS.down)) pitch -= turn;
     if (held(AIM_KEYS.powerUp)) this.setPower(this.power + CANNON.keyPowerSpeed * dt);
     if (held(AIM_KEYS.powerDown)) this.setPower(this.power - CANNON.keyPowerSpeed * dt);
-    this.cannon.setAim(yaw, pitch);
+    launcher.setAim(yaw, pitch);
 
-    const speed = muzzleSpeed(this.power, PROJECTILE.muzzleSpeedMin, PROJECTILE.muzzleSpeedMax);
-    this.cannon.muzzleWorld(this.muzzle);
-    this.cannon.aimDirection(this.launchVelocity).multiplyScalar(speed);
-    this.trajectory.update(this.muzzle, this.launchVelocity);
+    const speed = this.aimLaunch(launcher);
+    this.trajectory.update(this.muzzle, this.launchVelocity, launcher.projectile.gravityScale);
     this.hud.setPower(this.power, speed);
   }
 
   private setPower(p: number): void {
-    this.power = Math.min(Math.max(p, 0), 1);
+    this.powers[this.fsm.launcher] = Math.min(Math.max(p, 0), 1);
+  }
+
+  /** 발사: 충전이 있는 발사대는 chargeSec 뒤에 (그동안 조준 입력 잠금) */
+  private pullTrigger(): void {
+    const launcher = this.launcher;
+    if (launcher.chargeSec <= 0) {
+      this.fsm.transition(GameState.PROJECTILE_CAM);
+      return;
+    }
+    this.chargeLeft = launcher.chargeSec;
+    this.trajectory.visible = false;
+    launcher.beginCharge();
   }
 
   // ── 입력 ───────────────────────────────────────────────
@@ -415,12 +564,10 @@ export class Game {
     });
     canvas.addEventListener('pointermove', (e) => {
       const p = this.pointer;
-      if (!p || !this.fsm.is(GameState.AIMING)) return;
+      if (!p || !this.fsm.is(GameState.AIMING) || this.chargeLeft >= 0) return;
       const s = CANNON.dragSensitivity;
-      this.cannon.setAim(
-        this.cannon.yaw - (e.clientX - p.x) * s,
-        this.cannon.pitch - (e.clientY - p.y) * s,
-      );
+      const l = this.launcher;
+      l.setAim(l.yaw - (e.clientX - p.x) * s, l.pitch - (e.clientY - p.y) * s);
       p.x = e.clientX;
       p.y = e.clientY;
     });
@@ -435,7 +582,7 @@ export class Game {
     canvas.addEventListener(
       'wheel',
       (e) => {
-        if (!this.fsm.is(GameState.AIMING)) return;
+        if (!this.fsm.is(GameState.AIMING) || this.chargeLeft >= 0) return;
         e.preventDefault();
         this.setPower(this.power - Math.sign(e.deltaY) * CANNON.wheelPowerStep);
       },
@@ -449,7 +596,9 @@ export class Game {
         e.preventDefault();
         this.onPrimaryAction();
       } else if (e.code === 'KeyC') {
-        this.requestCannon();
+        this.requestLauncher('cannon');
+      } else if (e.code === 'KeyF') {
+        this.requestLauncher('wizard');
       } else if (e.code === 'KeyR') {
         this.requestReset();
       } else if (e.code === 'Escape') {
@@ -463,8 +612,8 @@ export class Game {
   /** 클릭 / Space: 컷신 스킵 또는 발사 */
   private onPrimaryAction(): void {
     if (this.killCam.active) this.killCam.skip();
-    else if (this.fsm.is(GameState.CANNON_CUTSCENE)) this.skipCutscene();
-    else if (this.fsm.is(GameState.AIMING)) this.fsm.transition(GameState.PROJECTILE_CAM);
+    else if (this.fsm.is(GameState.CUTSCENE)) this.skipCutscene();
+    else if (this.fsm.is(GameState.AIMING) && this.chargeLeft < 0) this.pullTrigger();
   }
 }
 

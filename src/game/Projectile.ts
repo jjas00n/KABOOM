@@ -1,11 +1,22 @@
-// 포탄: CCD 강체, 발사/반동
-// 무겁고 빠르다 (500kg, 40~120m/s). 얇은 유리·패널을 터널링하지 않게 CCD를 켠다.
-// 충돌 판정은 Game이 DestructionSystem.onCollisionStarted로 받아 hit()을 부른다.
+// 발사체: CCD 강체. 물리 특성은 ProjectileSpec(질량·반지름·중력 배수), 모양은 visual(Object3D).
+// 대포탄: 무겁고 빠르다 (500kg, 40~120m/s). 파이어볼: 가볍고 느리고 거의 직선.
+// 얇은 유리·패널을 터널링하지 않게 CCD를 켠다.
+// 충돌 판정은 Game이 DestructionSystem.onCollisionStarted로 받아 impact()를 부른다.
 import RAPIER from '@dimforge/rapier3d-compat';
-import { Color, Mesh, MeshStandardMaterial, SphereGeometry, Vector3, type Scene } from 'three';
+import {
+  Color,
+  Mesh,
+  MeshStandardMaterial,
+  SphereGeometry,
+  Vector3,
+  type Object3D,
+  type Scene,
+} from 'three';
 import type { ChaseTarget } from '../camera/ChaseCam';
 import { CANNON, PROJECTILE, XRAY } from '../config';
 import { PROJECTILE_GROUPS } from '../physics/collisionGroups';
+import { CANNON_SHELL } from './Cannon';
+import type { ProjectileSpec } from './Launcher';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 
 const SPHERE_SEGMENTS = 24;
@@ -31,8 +42,10 @@ export interface ProjectileProbe {
 }
 
 export class Projectile implements ChaseTarget {
-  readonly mesh: Mesh;
-  private readonly material: MeshStandardMaterial;
+  /** 물리가 움직이는 렌더 대상 (기본: 대포탄 구) */
+  readonly mesh: Object3D;
+  /** 킬캠에서 빛나게 할 재질 (기본 대포탄일 때만) */
+  private readonly material: MeshStandardMaterial | null = null;
   /** probe용 재사용 객체 (비행 중 매 스텝 부른다) */
   private readonly ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
   private readonly probeDir = new Vector3();
@@ -43,17 +56,23 @@ export class Projectile implements ChaseTarget {
   constructor(
     scene: Scene,
     private readonly physics: PhysicsWorld,
+    readonly spec: ProjectileSpec = CANNON_SHELL,
+    visual: Object3D | null = null,
   ) {
-    this.material = new MeshStandardMaterial({
-      color: PROJECTILE.color,
-      metalness: CANNON.metalness,
-      roughness: CANNON.roughness,
-    });
-    this.mesh = new Mesh(
-      new SphereGeometry(PROJECTILE.radius, SPHERE_SEGMENTS, SPHERE_SEGMENTS / 2),
-      this.material,
-    );
-    this.mesh.castShadow = true;
+    if (visual) {
+      this.mesh = visual;
+    } else {
+      this.material = new MeshStandardMaterial({
+        color: PROJECTILE.color,
+        metalness: CANNON.metalness,
+        roughness: CANNON.roughness,
+      });
+      this.mesh = new Mesh(
+        new SphereGeometry(spec.radius, SPHERE_SEGMENTS, SPHERE_SEGMENTS / 2),
+        this.material,
+      );
+      this.mesh.castShadow = true;
+    }
     this.mesh.visible = false;
     scene.add(this.mesh);
   }
@@ -82,13 +101,14 @@ export class Projectile implements ChaseTarget {
 
   launch(origin: Vector3, velocity: Vector3): void {
     this.remove();
-    const r = PROJECTILE.radius;
-    const density = PROJECTILE.mass / ((4 / 3) * Math.PI * r * r * r);
+    const r = this.spec.radius;
+    const density = this.spec.mass / ((4 / 3) * Math.PI * r * r * r);
     this.mesh.position.copy(origin);
     this.body = this.physics.add(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(origin.x, origin.y, origin.z)
         .setLinvel(velocity.x, velocity.y, velocity.z)
+        .setGravityScale(this.spec.gravityScale)
         .setCcdEnabled(true),
       RAPIER.ColliderDesc.ball(r)
         .setDensity(density)
@@ -127,7 +147,7 @@ export class Projectile implements ChaseTarget {
     this.ray.dir = dir;
     const hit = this.physics.world.castRay(
       this.ray,
-      maxDistance + PROJECTILE.radius,
+      maxDistance + this.spec.radius,
       true,
       undefined,
       PROJECTILE_GROUPS, // 포탄이 실제로 부딪히는 것만 (잔해 제외)
@@ -140,12 +160,13 @@ export class Projectile implements ChaseTarget {
     return {
       point: body.currPos.clone().addScaledVector(dir, hit.timeOfImpact),
       body: target,
-      distance: Math.max(hit.timeOfImpact - PROJECTILE.radius, 0),
+      distance: Math.max(hit.timeOfImpact - this.spec.radius, 0),
     };
   }
 
   /** 엑스레이 화면: 밝게 빛나고 건물에 가려지지 않게 맨 위에 그린다 */
   setGlow(on: boolean): void {
+    if (!this.material) return;
     this.material.emissive.set(on ? XRAY.shellColor : BLACK);
     this.material.depthTest = !on;
     this.mesh.renderOrder = on ? XRAY_RENDER_ORDER : 0;
