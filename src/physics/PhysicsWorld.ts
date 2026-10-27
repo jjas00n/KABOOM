@@ -214,6 +214,11 @@ export class PhysicsWorld {
     return this.moving.size;
   }
 
+  /** fixed가 아닌 바디마다 (그림자 범위 등). 순회 중 추가/제거 금지 */
+  forEachMoving(fn: (body: PhysicsBody) => void): void {
+    for (const body of this.moving) fn(body);
+  }
+
   has(body: PhysicsBody): boolean {
     return this.bodies.has(body);
   }

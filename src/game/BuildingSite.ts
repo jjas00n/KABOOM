@@ -1,4 +1,4 @@
-// 건물 한 채의 수명: 절차적 생성 → 부재별 사전 분할(워커) → 구조 그래프 + 조각 물리 → 파괴.
+// 건물 한 채의 수명: 절차적 생성 → 부재별 사전 분할(워커) → 구조 그래프 + 조각 물리 → 파괴 (+ 이펙트).
 // 게임(Game)과 디버그 샌드박스(BuildingDemo)가 같이 쓴다. 카메라/입력은 모른다.
 import type { Scene, Vector3 } from 'three';
 import {
@@ -7,16 +7,31 @@ import {
   type BuildingParams,
 } from '../building/BuildingGenerator';
 import { memberSeeds, seedCountsForPreset } from '../building/seedBudget';
-import { BUILDING_DEMO, DEBRIS, DEFAULT_QUALITY, STRUCTURE, type QualityPreset } from '../config';
+import {
+  BUILDING_DEMO,
+  DEBRIS,
+  DEFAULT_QUALITY,
+  GLASS,
+  STRUCTURE,
+  type GlassMode,
+  type QualityPreset,
+} from '../config';
+import type { Assets } from '../core/Assets';
 import { DestructionSystem, type DestructionStats } from '../destruction/DestructionSystem';
 import { StructureDebug } from '../destruction/StructureDebug';
 import { fractureInWorker } from '../fracture/FractureJob';
 import { MATERIAL, type Fragment } from '../fracture/Fragment';
-import { createFragmentMaterials, type FragmentMaterials } from '../fracture/FragmentMeshes';
+import {
+  createFragmentMaterials,
+  setGlassMode,
+  type FragmentMaterials,
+} from '../fracture/FragmentMeshes';
 import type { Aabb } from '../fracture/polyhedron';
 import { createRng } from '../fracture/seeds';
-import type { PhysicsWorld } from '../physics/PhysicsWorld';
+import { Effects } from '../fx/Effects';
+import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
+import type { TimeControl } from './Game';
 
 /** 분할(워커)이 진행률 바에서 차지하는 비율. 나머지는 메시/바디/그래프 생성. */
 const FRACTURE_PROGRESS_SHARE = 0.9;
@@ -40,22 +55,52 @@ export class BuildingSite {
   };
   debugColors = false;
   showGraph = false;
+  /** 유리 렌더 방식. 바꾼 뒤 applyGlassMode() */
+  glassMode: GlassMode = GLASS.defaultMode;
+  readonly effects: Effects;
   /** 기둥 바깥면까지의 외곽 (생성 전 null) */
   footprint: Aabb | null = null;
   /** 난간 꼭대기 높이 */
   height = 0;
 
-  private readonly materials = createFragmentMaterials();
+  private readonly materials: FragmentMaterials;
+  private builtQuality: QualityPreset | null = null;
   private system: DestructionSystem | null = null;
   private graphDebug: StructureDebug | null = null;
   /** reset이 겹쳐 들어오면 늦게 끝난 이전 생성 결과를 버리기 위한 세대 번호 */
   private generation = 0;
 
+  /** 건물 외곽 + 높이 (그림자 범위 등). 생성 전 null */
+  private readonly box: Aabb = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
+
+  /**
+   * assets: 텍스처 (없으면 단색). ground: 지면 바디 (조각 지면 충돌 이펙트용).
+   * time: 파티클 시계를 물리 배속(hit-stop 등)에 맞추기 위한 시간 배속.
+   */
   constructor(
     private readonly scene: Scene,
     private readonly physics: PhysicsWorld,
     private readonly loading: LoadingOverlay,
-  ) {}
+    assets: Assets | null = null,
+    private readonly ground: PhysicsBody | null = null,
+    private readonly time: TimeControl | null = null,
+  ) {
+    this.materials = createFragmentMaterials(assets, this.glassMode);
+    this.effects = new Effects(scene, this.settings.quality);
+  }
+
+  /** 건물 외곽(기둥 바깥면) × 지면~난간 꼭대기. 생성 전 null */
+  get bounds(): Aabb | null {
+    const f = this.footprint;
+    if (!f) return null;
+    Object.assign(this.box.min, f.min, { y: 0 });
+    Object.assign(this.box.max, f.max, { y: this.height });
+    return this.box;
+  }
+
+  applyGlassMode(): void {
+    setGlassMode(this.materials.glass, this.glassMode);
+  }
 
   /** 조각 재질 3종 (엑스레이 화면이 잠깐 바꾼다) */
   get fragmentMaterials(): FragmentMaterials {
@@ -79,6 +124,7 @@ export class BuildingSite {
 
   /** 렌더 프레임마다 */
   update(dt: number): void {
+    this.effects.update(dt * (this.time?.timeScale ?? 1));
     const d = this.system;
     if (!d) return;
     this.physics.removeBelow(DEBRIS.killY, (body) => d.forget(body));
@@ -89,7 +135,9 @@ export class BuildingSite {
 
   /** 지정 지점에 에너지(J)만큼 폭발. 반환: 파괴 반경 (건물이 없으면 0) */
   detonate(point: Vector3, energy: number, random?: () => number): number {
-    return this.system?.detonate(point, energy, random) ?? 0;
+    const radius = this.system?.detonate(point, energy, random) ?? 0;
+    if (radius > 0) this.effects.blast(point, radius);
+    return radius;
   }
 
   setDebugColors(enabled: boolean): void {
@@ -122,6 +170,14 @@ export class BuildingSite {
     this.graphDebug = null;
     this.system?.dispose();
     this.system = null;
+    this.effects.clear();
+    this.effects.setQuality(this.settings.quality);
+    // 프리셋이 바뀌면 유리 방식도 프리셋 기본값으로 (GUI로 바꾼 값은 다음 프리셋 변경까지 유지)
+    if (this.settings.quality !== this.builtQuality) {
+      this.builtQuality = this.settings.quality;
+      this.glassMode = GLASS.modeByQuality[this.builtQuality];
+      this.applyGlassMode();
+    }
     const started = performance.now();
     this.loading.show('Generating building…');
 
@@ -159,6 +215,10 @@ export class BuildingSite {
       volumePercentile(frags, DEBRIS.simpleColliderPercentile),
     );
     this.system = d;
+    d.ground = this.ground;
+    d.onGroundImpact = (body, speed) =>
+      this.effects.groundImpact(body.currPos, speed, body.rigidBody.mass());
+    d.onGlassBroken = (position) => this.effects.glassBroken(position);
     this.graphDebug = new StructureDebug(this.scene, d.graph, d.positions);
     this.graphDebug.setEnabled(this.showGraph);
     if (this.debugColors) this.setDebugColors(true);

@@ -6,6 +6,7 @@ import { Vector3, type Scene } from 'three';
 import type { CameraRig } from '../camera/CameraRig';
 import { KillCam } from '../camera/KillCam';
 import { XRAY } from '../config';
+import type { PostFX } from '../fx/PostFX';
 import { XRayView } from '../fx/XRayView';
 import type { BuildingSite } from './BuildingSite';
 import type { TimeControl } from './Game';
@@ -29,6 +30,7 @@ export class XRayKillCam {
     private readonly rig: CameraRig,
     private readonly time: TimeControl,
     private readonly projectile: Projectile,
+    private readonly postfx: PostFX | null = null,
   ) {
     this.view = new XRayView(scene);
   }
@@ -51,6 +53,7 @@ export class XRayKillCam {
     this.time.timeScale = XRAY.timeScale;
     this.trailStart.copy(this.projectile.position);
     this.view.enable(d, site.fragmentMaterials);
+    this.postfx?.setXRay(true);
     this.cam.start(contact, dir, depth, this.rig.camera.position, this.projectile);
     this.rig.setController(this.cam, XRAY.blendSec);
     this.projectile.setGlow(true);
@@ -89,6 +92,7 @@ export class XRayKillCam {
     this.running = false;
     const site = this.site;
     this.view.disable(() => site?.restoreColors());
+    this.postfx?.setXRay(false);
     this.time.timeScale = this.savedTimeScale;
     this.projectile.setGlow(false);
     this.site = null;

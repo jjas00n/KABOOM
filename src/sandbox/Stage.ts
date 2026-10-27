@@ -1,53 +1,112 @@
-// 공용 무대: 배경, 방향광 + 환경광, 지면(시각 + 물리). 디버그용 OrbitControls 생성 헬퍼.
+// 공용 무대: HDRI 하늘·환경광, 태양(동적 그림자 범위), 지면(시각 + 물리). 디버그용 OrbitControls 생성 헬퍼.
 import RAPIER from '@dimforge/rapier3d-compat';
 import {
   Color,
   DirectionalLight,
+  FogExp2,
   HemisphereLight,
   Mesh,
   MeshStandardMaterial,
   PlaneGeometry,
+  type Texture,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { LIGHTING, RENDER, SANDBOX } from '../config';
+import { LIGHTING, RENDER, SANDBOX, TEXTURES } from '../config';
+import type { Assets } from '../core/Assets';
 import type { Renderer } from '../core/Renderer';
+import { ShadowFit } from '../fx/ShadowFit';
 import { XRAY_HIDE } from '../fx/XRayView';
-import type { Vec3Like } from '../fracture/polyhedron';
-import type { PhysicsWorld } from '../physics/PhysicsWorld';
+import type { Aabb, Vec3Like } from '../fracture/polyhedron';
+import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 
-export function createStage(renderer: Renderer, physics: PhysicsWorld): void {
-  const { scene } = renderer;
-  scene.background = new Color(LIGHTING.background);
+export class Stage {
+  readonly sun: DirectionalLight;
+  readonly ground: PhysicsBody;
+  readonly shadows: ShadowFit;
 
-  const sun = new DirectionalLight(LIGHTING.sunColor, LIGHTING.sunIntensity);
-  const sp = LIGHTING.sunPosition;
-  sun.position.set(sp.x, sp.y, sp.z);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(RENDER.shadowMapSize, RENDER.shadowMapSize);
-  sun.shadow.normalBias = RENDER.shadowNormalBias;
-  const s = RENDER.shadowCameraSize;
-  Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s });
-  sun.shadow.camera.updateProjectionMatrix();
-  scene.add(sun);
-  scene.add(
-    new HemisphereLight(LIGHTING.hemiSkyColor, LIGHTING.hemiGroundColor, LIGHTING.hemiIntensity),
-  );
+  constructor(
+    renderer: Renderer,
+    private readonly physics: PhysicsWorld,
+    assets: Assets | null,
+  ) {
+    const { scene } = renderer;
+    if (assets) {
+      scene.background = assets.sky;
+      scene.backgroundBlurriness = LIGHTING.backgroundBlurriness;
+      scene.backgroundIntensity = LIGHTING.backgroundIntensity;
+      scene.environment = assets.environment;
+      scene.environmentIntensity = LIGHTING.environmentIntensity;
+      scene.fog = new FogExp2(LIGHTING.fogColor, LIGHTING.fogDensity);
+    } else {
+      scene.background = new Color(LIGHTING.background);
+    }
 
-  const size = SANDBOX.groundSize;
-  const ground = new Mesh(
-    new PlaneGeometry(size, size),
-    new MeshStandardMaterial({ color: SANDBOX.groundColor, roughness: 1 }),
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  ground.userData[XRAY_HIDE] = true;
-  scene.add(ground);
+    this.sun = new DirectionalLight(LIGHTING.sunColor, LIGHTING.sunIntensity);
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(RENDER.shadowMapSize, RENDER.shadowMapSize);
+    this.sun.shadow.normalBias = RENDER.shadowNormalBias;
+    scene.add(this.sun, this.sun.target);
+    this.shadows = new ShadowFit(this.sun, LIGHTING.sunDirection);
+    scene.add(
+      assets
+        ? new HemisphereLight(
+            LIGHTING.bounceSkyColor,
+            LIGHTING.bounceGroundColor,
+            LIGHTING.bounceIntensity,
+          )
+        : new HemisphereLight(
+            LIGHTING.hemiSkyColor,
+            LIGHTING.hemiGroundColor,
+            LIGHTING.hemiIntensity,
+          ),
+    );
 
-  const half = SANDBOX.groundThickness / 2;
-  physics.add(
-    RAPIER.RigidBodyDesc.fixed().setTranslation(0, -half, 0),
-    RAPIER.ColliderDesc.cuboid(size / 2, half, size / 2),
-  );
+    // 보이는 지면은 물리 지면보다 훨씬 크게: 끝이 안개에 묻혀 지평선이 된다 (HDRI 하늘은 아래가 비어 있다)
+    const size = assets ? TEXTURES.groundVisualSize : SANDBOX.groundSize;
+    const material = new MeshStandardMaterial({ color: SANDBOX.groundColor, roughness: 1 });
+    if (assets) {
+      const repeat = size * TEXTURES.groundScale;
+      const tiled = (t: Texture) => {
+        const c = t.clone();
+        c.repeat.set(repeat, repeat);
+        return c;
+      };
+      const g = assets.ground;
+      material.color.set(TEXTURES.groundTint);
+      material.map = tiled(g.color);
+      material.normalMap = tiled(g.normal);
+      material.roughnessMap = tiled(g.roughness);
+      if (g.ao) material.aoMap = tiled(g.ao);
+    }
+    const ground = new Mesh(new PlaneGeometry(size, size), material);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    ground.userData[XRAY_HIDE] = true;
+    scene.add(ground);
+
+    const half = SANDBOX.groundThickness / 2;
+    const physicsHalf = SANDBOX.groundSize / 2;
+    this.ground = physics.add(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(0, -half, 0),
+      RAPIER.ColliderDesc.cuboid(physicsHalf, half, physicsHalf).setActiveEvents(
+        RAPIER.ActiveEvents.COLLISION_EVENTS,
+      ),
+    );
+  }
+
+  /**
+   * 렌더 프레임마다: 그림자 범위를 focus(건물 등)와 움직이는 바디들에 맞춘다.
+   * focus가 없고 움직이는 것도 없으면 범위를 그대로 둔다.
+   */
+  update(dt: number, focus: Aabb | null): void {
+    const { shadows } = this;
+    shadows.begin();
+    if (focus) shadows.includeBox(focus);
+    this.physics.forEachMoving((body) => {
+      if (body.awake) shadows.includePoint(body.currPos);
+    });
+    shadows.update(dt);
+  }
 }
 
 /** 카메라를 cameraPosition에 두고 cameraTarget을 도는 궤도 컨트롤 (샌드박스용) */

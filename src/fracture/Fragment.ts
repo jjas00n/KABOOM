@@ -31,6 +31,8 @@ export interface Fragment {
   material: MaterialId;
 }
 
+const ORIGIN: Vec3Like = { x: 0, y: 0, z: 0 };
+
 export function buildFragments(
   cells: readonly VoronoiCell[],
   uvScale: number = FRACTURE.uvScale,
@@ -38,11 +40,17 @@ export function buildFragments(
   return cells.map((cell) => buildFragment(cell, uvScale));
 }
 
+/**
+ * uvOrigin: 원래 부재 박스의 최소 모서리. UV = (월드 좌표 - uvOrigin)을 면 법선의 주축 평면에 투영
+ * (= 부재 기준 박스 투영). 같은 부재의 조각들은 텍스처가 이어지고, 부재마다 텍스처가 새로 시작해
+ * 이음매가 프리캐스트 패널처럼 보인다. 단면의 텍스처는 렌더러가 트라이플래너로 따로 입힌다.
+ */
 export function buildFragment(
   cell: VoronoiCell,
   uvScale: number = FRACTURE.uvScale,
   member = 0,
   material: MaterialId = MATERIAL.concrete,
+  uvOrigin: Vec3Like = ORIGIN,
 ): Fragment {
   const { poly, centroid: c } = cell;
   // 외부면을 먼저 쌓아 인덱스 범위로 재질 그룹을 나눌 수 있게 한다
@@ -69,7 +77,7 @@ export function buildFragment(
   for (const f of ordered) {
     const v = f.verts;
     const n = v.length / 3;
-    // 법선의 주축으로 평면 투영 (월드 좌표 기준이라 조각 사이 텍스처가 이어진다)
+    // 법선의 주축으로 평면 투영 (부재 기준 좌표라 같은 부재 조각 사이 텍스처가 이어진다)
     const ax = Math.abs(f.nx);
     const ay = Math.abs(f.ny);
     const az = Math.abs(f.nz);
@@ -84,8 +92,10 @@ export function buildFragment(
       normals[(vi + k) * 3] = f.nx;
       normals[(vi + k) * 3 + 1] = f.ny;
       normals[(vi + k) * 3 + 2] = f.nz;
-      uvs[(vi + k) * 2] = (axis === 0 ? z : x) * uvScale;
-      uvs[(vi + k) * 2 + 1] = (axis === 1 ? z : y) * uvScale;
+      const u = axis === 0 ? z - uvOrigin.z : x - uvOrigin.x;
+      const w = axis === 1 ? z - uvOrigin.z : y - uvOrigin.y;
+      uvs[(vi + k) * 2] = u * uvScale;
+      uvs[(vi + k) * 2 + 1] = w * uvScale;
     }
     for (let k = 1; k + 1 < n; k++) {
       indices[ii++] = vi;

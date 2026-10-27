@@ -3,14 +3,15 @@
 import { Raycaster, Vector2, Vector3 } from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { DEBRIS, FRACTURE_DEMO } from '../config';
+import type { Assets } from '../core/Assets';
 import type { Renderer } from '../core/Renderer';
 import { applyExplosion } from '../destruction/Explosion';
 import { FragmentSet, hideRemovedFragment } from '../destruction/FragmentSet';
 import { fractureInWorker } from '../fracture/FractureJob';
-import { createFragmentMaterials } from '../fracture/FragmentMeshes';
+import { createFragmentMaterials, type FragmentMaterials } from '../fracture/FragmentMeshes';
 import { adaptiveSeeds, createRng, jitteredGridSeeds, uniformSeeds } from '../fracture/seeds';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
-import { createOrbitControls, createStage, onCanvasClick } from './Stage';
+import { createOrbitControls, onCanvasClick, Stage } from './Stage';
 
 export type SeedMode = 'uniform' | 'jittered' | 'adaptive';
 
@@ -32,7 +33,8 @@ export class FractureDemo {
   lastFractureMs = 0;
 
   private readonly controls: OrbitControls;
-  private readonly materials = createFragmentMaterials();
+  private readonly materials: FragmentMaterials;
+  private readonly stage: Stage;
   private fragments: FragmentSet | null = null;
   private shattered = false;
   /** reset이 겹쳐 들어오면 늦게 끝난 이전 분할 결과를 버리기 위한 세대 번호 */
@@ -45,8 +47,10 @@ export class FractureDemo {
   constructor(
     private readonly renderer: Renderer,
     private readonly physics: PhysicsWorld,
+    assets: Assets | null = null,
   ) {
-    createStage(renderer, physics);
+    this.stage = new Stage(renderer, physics, assets);
+    this.materials = createFragmentMaterials(assets);
     this.controls = createOrbitControls(
       renderer,
       FRACTURE_DEMO.cameraPosition,
@@ -59,8 +63,9 @@ export class FractureDemo {
     this.reset();
   }
 
-  update(): void {
+  update(dt: number): void {
     this.controls.update();
+    this.stage.update(dt, BOX);
     this.physics.removeBelow(DEBRIS.killY, hideRemovedFragment);
   }
 
