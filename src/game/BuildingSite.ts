@@ -1,4 +1,4 @@
-// 건물 한 채의 수명: 절차적 생성 → 부재별 사전 분할(워커) → 구조 그래프 + 조각 물리 → 파괴 (+ 이펙트).
+// 건물 한 채의 수명: 절차적 생성 → 부재별 사전 분할(워커) → 구조 그래프 + 조각 물리 → 파괴·화재 (+ 이펙트).
 // 게임(Game)과 디버그 샌드박스(BuildingDemo)가 같이 쓴다. 카메라/입력은 모른다.
 import type { Scene, Vector3 } from 'three';
 import {
@@ -11,6 +11,8 @@ import {
   BUILDING_DEMO,
   DEBRIS,
   DEFAULT_QUALITY,
+  FIRE,
+  FIREBALL,
   GLASS,
   STRUCTURE,
   type GlassMode,
@@ -29,8 +31,11 @@ import {
 import type { Aabb } from '../fracture/polyhedron';
 import { createRng } from '../fracture/seeds';
 import { Effects } from '../fx/Effects';
+import { LightPool } from '../fx/LightPool';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
+import { BuildingFire } from './BuildingFire';
+import { fireballProfile } from './fireball';
 import type { TimeControl } from './Game';
 
 /** 분할(워커)이 진행률 바에서 차지하는 비율. 나머지는 메시/바디/그래프 생성. */
@@ -58,6 +63,9 @@ export class BuildingSite {
   /** 유리 렌더 방식. 바꾼 뒤 applyGlassMode() */
   glassMode: GlassMode = GLASS.defaultMode;
   readonly effects: Effects;
+  /** 포인트 라이트 풀 (파이어볼·마법사·화재가 나눠 쓴다) */
+  readonly lights: LightPool;
+  readonly fireStats = { burning: 0 };
   /** 기둥 바깥면까지의 외곽 (생성 전 null) */
   footprint: Aabb | null = null;
   /** 난간 꼭대기 높이 */
@@ -66,6 +74,10 @@ export class BuildingSite {
   private readonly materials: FragmentMaterials;
   private builtQuality: QualityPreset | null = null;
   private system: DestructionSystem | null = null;
+  private burning: BuildingFire | null = null;
+  private heatmap = false;
+  /** 화재 확산 속도 배율 (디버그) */
+  spreadMultiplier: number = FIRE.spreadMultiplier;
   private graphDebug: StructureDebug | null = null;
   /** reset이 겹쳐 들어오면 늦게 끝난 이전 생성 결과를 버리기 위한 세대 번호 */
   private generation = 0;
@@ -87,6 +99,7 @@ export class BuildingSite {
   ) {
     this.materials = createFragmentMaterials(assets, this.glassMode);
     this.effects = new Effects(scene, this.settings.quality);
+    this.lights = new LightPool(scene);
   }
 
   /** 건물 외곽(기둥 바깥면) × 지면~난간 꼭대기. 생성 전 null */
@@ -112,6 +125,11 @@ export class BuildingSite {
     this.system?.fragments.meshes.setDebugColors(this.debugColors, BUILDING_DEMO.debugColorSeed);
   }
 
+  /** 건물 화재 (생성 중이면 null) */
+  get fire(): BuildingFire | null {
+    return this.burning;
+  }
+
   /** 생성이 끝난 건물의 파괴 시스템 (생성 중이면 null) */
   get destruction(): DestructionSystem | null {
     return this.system;
@@ -120,11 +138,16 @@ export class BuildingSite {
   /** 고정 timestep마다 (물리 스텝 직후) */
   step(dt: number): void {
     this.system?.step(dt);
+    this.burning?.step(dt);
   }
 
   /** 렌더 프레임마다 */
   update(dt: number): void {
-    this.effects.update(dt * (this.time?.timeScale ?? 1));
+    const physicsDt = dt * (this.time?.timeScale ?? 1);
+    this.effects.update(physicsDt);
+    this.materials.fireTime.value += physicsDt;
+    this.burning?.update(physicsDt);
+    this.fireStats.burning = this.burning?.burningCount ?? 0;
     const d = this.system;
     if (!d) return;
     this.physics.removeBelow(DEBRIS.killY, (body) => d.forget(body));
@@ -136,8 +159,39 @@ export class BuildingSite {
   /** 지정 지점에 에너지(J)만큼 폭발. 반환: 파괴 반경 (건물이 없으면 0) */
   detonate(point: Vector3, energy: number, random?: () => number): number {
     const radius = this.system?.detonate(point, energy, random) ?? 0;
-    if (radius > 0) this.effects.blast(point, radius);
+    if (radius > 0) {
+      this.effects.blast(point, radius);
+      this.burning?.cannonBlast(point);
+    }
     return radius;
+  }
+
+  /** 화염 폭발: 넓게 얕게 부수고, 반경 안 유리를 깨고, 불을 붙인다. 반환: 폭발 반경 */
+  fireBlast(point: Vector3, random?: () => number): number {
+    const radius = this.system?.detonate(point, 0, random, fireballProfile()) ?? 0;
+    if (radius <= 0) return 0;
+    this.effects.fireBlast(point, radius);
+    this.burning?.ignite(point, FIREBALL.blastHeatRadius, FIREBALL.blastHeat);
+    return radius;
+  }
+
+  /** 디버그: 불을 전부 끈다 */
+  extinguish(): void {
+    this.burning?.extinguish();
+  }
+
+  setSpreadMultiplier(v: number): void {
+    this.spreadMultiplier = v;
+    if (this.burning) this.burning.system.spreadMultiplier = v;
+  }
+
+  /** 디버그: 조각 색을 heat로 */
+  setHeatmap(enabled: boolean): void {
+    this.heatmap = enabled;
+    const f = this.burning;
+    if (!f) return;
+    f.heatmap = enabled;
+    if (!enabled) this.restoreColors();
   }
 
   setDebugColors(enabled: boolean): void {
@@ -168,6 +222,8 @@ export class BuildingSite {
     const generation = ++this.generation;
     this.graphDebug?.dispose();
     this.graphDebug = null;
+    this.burning?.dispose();
+    this.burning = null;
     this.system?.dispose();
     this.system = null;
     this.effects.clear();
@@ -219,6 +275,15 @@ export class BuildingSite {
     d.onGroundImpact = (body, speed) =>
       this.effects.groundImpact(body.currPos, speed, body.rigidBody.mass());
     d.onGlassBroken = (position) => this.effects.glassBroken(position);
+    this.burning = new BuildingFire(
+      d,
+      (i) => member(i).kind,
+      this.effects.fire,
+      this.lights,
+      createRng(params.seed + 1),
+    );
+    this.burning.heatmap = this.heatmap;
+    this.burning.system.spreadMultiplier = this.spreadMultiplier;
     this.graphDebug = new StructureDebug(this.scene, d.graph, d.positions);
     this.graphDebug.setEnabled(this.showGraph);
     if (this.debugColors) this.setDebugColors(true);

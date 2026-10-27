@@ -1,9 +1,9 @@
-// 대포: 절차적 메시, 등장 애니메이션, 조준
+// 대포 (Launcher 구현): 절차적 메시, 등장 애니메이션, 조준
 // 슈퍼마리오64 대포 오마주 — 풀 언덕 꼭대기 검은 구멍에서 솟아오르는 검은 포신 + 받침.
 // 메시·텍스처는 전부 코드로 만든다 (원작 에셋 사용 안 함).
 //
 // 계층: root(언덕 위, 건물을 향함) → riser(솟아오르기) → base, yawPivot(y축) → pitchPivot(x축) → barrel
-// 조준 방향·포구 위치는 riser 애니메이션과 무관한 '다 솟은 자세' 기준 수식으로 계산한다
+// 조준 방향·포구 위치는 riser 애니메이션과 무관한 '다 솟은 자세' 기준 수식(cannonShot)으로 계산한다
 // (컷신 끝 자세, 예상 궤적, 실제 발사가 항상 같은 값을 쓰도록).
 import {
   CircleGeometry,
@@ -18,11 +18,23 @@ import {
   Vector3,
   type Scene,
 } from 'three';
-import { CANNON } from '../config';
+import type { Vec3Like } from '../fracture/polyhedron';
+import { CAMERA, CANNON, PROJECTILE } from '../config';
+import { DEFAULT_CHASE } from '../camera/ChaseCam';
+import { DEFAULT_CUTSCENE } from '../camera/CutsceneCam';
 import { easeOutBack } from '../camera/easing';
 import { createPuffTexture } from '../fx/puffTexture';
 import { XRAY_HIDE } from '../fx/XRayView';
-import { aimDirection, clampAim } from './ballistics';
+import { aimDirection, clampAim, muzzleSpeed } from './ballistics';
+import type {
+  AimCameraSpec,
+  AimLimits,
+  ChaseSpec,
+  CutsceneSpec,
+  Launcher,
+  PowerRange,
+  ProjectileSpec,
+} from './Launcher';
 
 const LATHE_SEGMENTS = 40;
 const HILL_PROFILE_STEPS = 24;
@@ -33,12 +45,67 @@ interface Puff {
   age: number;
 }
 
-export class Cannon {
+export const CANNON_LIMITS: AimLimits = CANNON;
+export const CANNON_POWER: PowerRange = {
+  speedMin: PROJECTILE.muzzleSpeedMin,
+  speedMax: PROJECTILE.muzzleSpeedMax,
+  defaultPower: PROJECTILE.defaultPower,
+};
+export const CANNON_SHELL: ProjectileSpec = {
+  kind: 'shell',
+  mass: PROJECTILE.mass,
+  radius: PROJECTILE.radius,
+  gravityScale: 1,
+  maxFlightSec: PROJECTILE.maxFlightSec,
+};
+
+/** 대포를 건물 중심 쪽으로 돌리는 기본 방위각 */
+export function cannonBaseYaw(buildingCenter: Vec3Like): number {
+  return Math.atan2(buildingCenter.x - CANNON.position.x, buildingCenter.z - CANNON.position.z);
+}
+
+/**
+ * 대포 발사 상태 (순수 수식, DOM 없음 — 회귀 테스트도 이걸 쓴다).
+ * 포구 = 회전축 + 조준 방향 × 포신 길이, 속도 = 조준 방향 × 파워에 따른 포구 속도.
+ */
+export function cannonShot(
+  yaw: number,
+  pitch: number,
+  power: number,
+  buildingCenter: Vec3Like,
+): { origin: Vector3; velocity: Vector3 } {
+  const a = clampAim(yaw, pitch, CANNON_LIMITS);
+  const dir = new Vector3();
+  aimDirection(cannonBaseYaw(buildingCenter), a.yaw, a.pitch, dir);
+  const origin = new Vector3(
+    CANNON.position.x,
+    CANNON.hillHeight + CANNON.pivotHeight,
+    CANNON.position.z,
+  ).addScaledVector(dir, CANNON.barrelLength);
+  const speed = muzzleSpeed(power, CANNON_POWER.speedMin, CANNON_POWER.speedMax);
+  return { origin, velocity: dir.multiplyScalar(speed) };
+}
+
+export class Cannon implements Launcher {
+  readonly id = 'cannon' as const;
   readonly root = new Group();
   /** 건물 쪽 기본 방위각 (+z 기준 y축 회전) */
   readonly baseYaw: number;
   yaw = 0;
   pitch: number = CANNON.startPitch;
+  readonly limits = CANNON_LIMITS;
+  readonly power = CANNON_POWER;
+  readonly projectile = CANNON_SHELL;
+  readonly chargeSec = 0;
+  readonly fireTrauma = CAMERA.fireTrauma;
+  readonly cutscene: CutsceneSpec = DEFAULT_CUTSCENE;
+  readonly aimCamera: AimCameraSpec = {
+    back: CAMERA.aimBack,
+    up: CAMERA.aimUp,
+    ahead: CAMERA.aimAhead,
+    side: 0,
+  };
+  readonly chase: ChaseSpec = DEFAULT_CHASE;
 
   private readonly riser = new Group();
   private readonly yawPivot = new Group();
@@ -54,7 +121,7 @@ export class Cannon {
   constructor(scene: Scene, buildingCenter: Vector3) {
     const { position, hillHeight } = CANNON;
     this.root.position.set(position.x, hillHeight, position.z);
-    this.baseYaw = Math.atan2(buildingCenter.x - position.x, buildingCenter.z - position.z);
+    this.baseYaw = cannonBaseYaw(buildingCenter);
     this.root.rotation.y = this.baseYaw;
 
     scene.add(createHill(position.x, position.z));
@@ -113,36 +180,39 @@ export class Cannon {
       this.puffs.push({ sprite, velocity: new Vector3(), age: Infinity });
     }
 
-    this.lower();
+    this.hide();
     scene.add(this.root);
   }
 
-  get risen(): boolean {
+  get ready(): boolean {
     return this.riseT >= 1;
   }
 
   /** 땅속으로 즉시 내린다 (다음 컷신에서 다시 솟아오르게) */
-  lower(): void {
+  hide(): void {
     this.riseT = 0;
     this.rising = false;
     this.applyPose();
   }
 
   /** 솟아오르기 시작 (이미 솟았으면 무시) */
-  rise(): void {
-    if (!this.risen) this.rising = true;
+  appear(): void {
+    if (!this.ready) this.rising = true;
   }
 
   /** 등장 애니메이션 건너뛰기 */
-  finishRise(): void {
+  finishAppear(): void {
     this.riseT = 1;
     this.rising = false;
     this.applyPose();
   }
 
+  /** 대포는 충전 없이 바로 쏜다 */
+  beginCharge(): void {}
+
   /** 각도 제한 안으로 조준 */
   setAim(yaw: number, pitch: number): void {
-    const a = clampAim(yaw, pitch);
+    const a = clampAim(yaw, pitch, this.limits);
     this.yaw = a.yaw;
     this.pitch = a.pitch;
     this.applyPose();

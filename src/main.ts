@@ -9,7 +9,7 @@ import { PhysicsWorld } from './physics/PhysicsWorld';
 import { BuildingDemo } from './sandbox/BuildingDemo';
 import { FractureDemo } from './sandbox/FractureDemo';
 import { PhysicsSandbox } from './sandbox/PhysicsSandbox';
-import { addBuildingGui } from './ui/buildingGui';
+import { addBuildingGui, addFireGui } from './ui/buildingGui';
 import { addVisualsGui } from './ui/visualsGui';
 import { DebugGUI } from './ui/DebugGUI';
 import { LoadingOverlay } from './ui/LoadingOverlay';
@@ -59,8 +59,10 @@ function createGame(
     setupGui: (gui) => {
       const folder = gui.addFolder('Game');
       folder.add(game, 'state').name('State').disable().listen();
-      folder.add(game, 'power', 0, 1, 0.01).name('Power').listen();
+      folder.add(game.powers, 'cannon', 0, 1, 0.01).name('Cannon power').listen();
+      folder.add(game.powers, 'wizard', 0, 1, 0.01).name('Wizard power').listen();
       addBuildingGui(gui, game.site, () => game.reset());
+      addFireGui(gui, game.site);
       addVisualsGui(gui, renderer.postfx, game.site);
     },
   };

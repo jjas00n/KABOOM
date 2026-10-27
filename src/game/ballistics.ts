@@ -4,6 +4,7 @@
 // 그래야 조준 화면의 예상 궤적 점선이 실제로 날아가는 경로와 겹친다 (안 맞추면 3초에 12cm 어긋남).
 import { CANNON, PHYSICS } from '../config';
 import type { Vec3Like } from '../fracture/polyhedron';
+import type { AimLimits } from './Launcher';
 
 /** maxSec 동안 stepSec 간격 궤적에 필요한 최대 점 수 (버퍼 크기용) */
 export function trajectoryCapacity(stepSec: number, maxSec: number): number {
@@ -65,11 +66,15 @@ function put(out: Float32Array, n: number, x: number, y: number, z: number): num
   return n + 1;
 }
 
-/** 조준 각도를 대포 제한 안으로 */
-export function clampAim(yaw: number, pitch: number): { yaw: number; pitch: number } {
+/** 조준 각도를 발사대 제한 안으로 (기본: 대포) */
+export function clampAim(
+  yaw: number,
+  pitch: number,
+  limits: AimLimits = CANNON,
+): { yaw: number; pitch: number } {
   return {
-    yaw: Math.min(Math.max(yaw, -CANNON.yawLimit), CANNON.yawLimit),
-    pitch: Math.min(Math.max(pitch, CANNON.pitchMin), CANNON.pitchMax),
+    yaw: Math.min(Math.max(yaw, -limits.yawLimit), limits.yawLimit),
+    pitch: Math.min(Math.max(pitch, limits.pitchMin), limits.pitchMax),
   };
 }
 
