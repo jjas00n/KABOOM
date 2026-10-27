@@ -13,9 +13,10 @@ import {
 } from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { DEBRIS, SANDBOX } from '../config';
+import type { Assets } from '../core/Assets';
 import type { Renderer } from '../core/Renderer';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
-import { createOrbitControls, createStage, onCanvasClick } from './Stage';
+import { createOrbitControls, onCanvasClick, Stage } from './Stage';
 
 const HIDDEN = new Matrix4().makeScale(0, 0, 0);
 const IDENTITY_ROT = { x: 0, y: 0, z: 0, w: 1 };
@@ -23,6 +24,7 @@ const ZERO = { x: 0, y: 0, z: 0 };
 
 export class PhysicsSandbox {
   private readonly controls: OrbitControls;
+  private readonly stage: Stage;
   private readonly boxes: InstancedMesh;
   private readonly boxBodies: PhysicsBody[] = [];
   private readonly boxHome: Vector3[] = [];
@@ -38,9 +40,10 @@ export class PhysicsSandbox {
   constructor(
     private readonly renderer: Renderer,
     private readonly physics: PhysicsWorld,
+    assets: Assets | null = null,
   ) {
     const { scene, canvas } = renderer;
-    createStage(renderer, physics);
+    this.stage = new Stage(renderer, physics, assets);
     this.controls = createOrbitControls(renderer, SANDBOX.cameraPosition, SANDBOX.cameraTarget);
 
     const { x: nx, y: ny, z: nz } = SANDBOX.boxGrid;
@@ -75,8 +78,9 @@ export class PhysicsSandbox {
     });
   }
 
-  update(): void {
+  update(dt: number): void {
     this.controls.update();
+    this.stage.update(dt, null);
     this.physics.removeBelow(DEBRIS.killY, this.onBodyRemoved);
   }
 

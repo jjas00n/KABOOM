@@ -17,6 +17,8 @@ import { XRAY } from '../config';
 
 /** 이 userData 플래그가 붙은 물체(지면, 언덕)는 투시 화면에서 숨긴다 → 배경만 남아 대상이 도드라진다 */
 export const XRAY_HIDE = 'xrayHide';
+/** 투시 화면이 켜져 있는 동안 scene.userData에 true (스스로 visible을 켜고 끄는 이펙트가 확인한다) */
+export const XRAY_ACTIVE = 'xrayActive';
 import type { DestructionSystem } from '../destruction/DestructionSystem';
 import { MATERIAL } from '../fracture/Fragment';
 import type { FragmentMaterials } from '../fracture/FragmentMeshes';
@@ -76,6 +78,7 @@ export class XRayView {
     });
     this.savedBackground = this.scene.background;
     this.scene.background = new Color(XRAY.background);
+    this.scene.userData[XRAY_ACTIVE] = true;
     this.hidden = [];
     this.scene.traverse((o) => {
       if (o.userData[XRAY_HIDE] && o.visible) this.hidden.push(o);
@@ -115,6 +118,7 @@ export class XRayView {
     }
     this.saved = [];
     this.scene.background = this.savedBackground;
+    this.scene.userData[XRAY_ACTIVE] = false;
     for (const o of this.hidden) o.visible = true;
     this.hidden = [];
     this.trail.visible = false;

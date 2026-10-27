@@ -7,7 +7,7 @@
 import { Vector3, type Scene } from 'three';
 import { StructureGraph, type NodeInfo } from '../building/StructureGraph';
 import { DEBRIS, STRUCTURE } from '../config';
-import type { Fragment } from '../fracture/Fragment';
+import { MATERIAL, type Fragment } from '../fracture/Fragment';
 import type { FragmentMaterials } from '../fracture/FragmentMeshes';
 import type { Vec3Like } from '../fracture/polyhedron';
 import { DEBRIS_GROUPS } from '../physics/collisionGroups';
@@ -55,6 +55,13 @@ export class DestructionSystem {
    * 포탄처럼 다른 쪽에서 충돌을 알아야 하면 이 훅을 쓴다.
    */
   onCollisionStarted: ((a: PhysicsBody, b: PhysicsBody) => void) | null = null;
+  /** 지면 바디 (있으면 떨어진 조각이 지면에 부딪힐 때 onGroundImpact) */
+  ground: PhysicsBody | null = null;
+  /** 움직이는 덩어리가 지면에 처음 닿음. speed: 충돌 직전 속력 (m/s) — 먼지 등 이펙트용 */
+  onGroundImpact: ((body: PhysicsBody, speed: number) => void) | null = null;
+  /** 유리 조각이 처음으로 떨어져 나감 (조각 원래 자리) — 이펙트용 */
+  onGlassBroken: ((position: Vec3Like) => void) | null = null;
+  private readonly glassBroken: Uint8Array;
 
   constructor(
     scene: Scene,
@@ -67,6 +74,7 @@ export class DestructionSystem {
     this.graph = StructureGraph.fromFragments(frags, nodeInfo);
     this.solver = new CollapseSolver(this.graph);
     this.positions = new Float64Array(frags.length * 3);
+    this.glassBroken = new Uint8Array(frags.length);
     frags.forEach((f, i) => this.positions.set([f.centroid.x, f.centroid.y, f.centroid.z], i * 3));
     this.debris = new DebrisManager(physics, {
       onRemove: (body) => this.forget(body),
@@ -147,6 +155,14 @@ export class DestructionSystem {
     this.frozen.delete(chunk);
     if (chunk.frags.length > 1) this.compounds.add(chunk);
     this.debris.add(chunk.body, chunk.volume);
+    if (this.onGlassBroken) {
+      for (const i of chunk.frags) {
+        if (this.glassBroken[i] || this.fragments.fragments[i]!.material !== MATERIAL.glass)
+          continue;
+        this.glassBroken[i] = 1;
+        this.onGlassBroken(this.fragments.fragments[i]!.centroid);
+      }
+    }
   }
 
   private onFrozen(body: PhysicsBody): void {
@@ -210,6 +226,13 @@ export class DestructionSystem {
       const b = this.physics.getByCollider(e.collider2);
       if (!a || !b) return;
       this.onCollisionStarted?.(a, b);
+      if (this.ground && (a === this.ground || b === this.ground)) {
+        const mover = a === this.ground ? b : a;
+        if (this.onGroundImpact && this.fragments.chunkOfBody(mover)) {
+          this.onGroundImpact(mover, mover.preStepVelocity.length());
+        }
+        return;
+      }
       if (!this.chainCheck(a, b)) this.chainCheck(b, a);
     });
   }

@@ -43,27 +43,62 @@ export const FRACTURE = {
   weldEpsilon: 1e-6, // 같은 점으로 볼 거리 (m)
   minFaceArea: 1e-8, // 이보다 작은 면은 버린다 (m^2)
   contactEpsilon: 1e-6, // 부재끼리 맞닿았다고 볼 면 사이 거리 (m)
-  uvScale: 0.5, // 텍스처 반복 / m (월드 좌표 평면 투영)
+  uvScale: 0.5, // 외면 텍스처 반복 / m (부재 박스 기준 박스 투영)
   progressEvery: 64, // 워커가 진행률을 보내는 셀 간격
 } as const;
 
-/** 재질 물성 */
+/** 재질 물성. 색은 텍스처가 없을 때(테스트) 단색, 있으면 텍스처에 곱하는 틴트. */
 export const CONCRETE = {
   density: 2400, // kg/m^3
   exteriorColor: 0xb8b2a7,
+  exteriorTint: 0xf2f2f0,
+  exteriorBrightness: 1.45, // 텍스처(Concrete042A)가 어두워서 틴트에 곱한다 (1 넘어도 된다)
   exteriorRoughness: 0.9,
   interiorColor: 0x77706a, // 단면: 더 어둡고 거칠게
+  interiorTint: 0xffffff, // 갓 깨진 단면은 풍화된 외면보다 밝다
+  interiorBrightness: 1.15,
   interiorRoughness: 1,
+  normalScale: 0.6,
   friction: 0.8,
 } as const;
+
+export type GlassMode = 'reflective' | 'transmission';
 
 export const GLASS = {
   density: 2500, // kg/m^3 (얇아서 조각은 가볍다)
   friction: 0.4,
-  color: 0x9fc4d6,
+  color: 0x5d7480,
   roughness: 0.05,
   metalness: 0,
-  opacity: 0.35,
+  // 'reflective': 반투명 + 환경 반사 (싸다, 기본). 'transmission': 굴절 투과 (화면 한 번 더 그림 → 비싸다)
+  defaultMode: 'reflective' as GlassMode,
+  modeByQuality: { low: 'reflective', medium: 'reflective', high: 'transmission' } as Record<
+    QualityPreset,
+    GlassMode
+  >,
+  opacity: 0.55, // reflective 모드 불투명도
+  envMapIntensity: 1.4, // reflective 모드는 반사를 세게 해 유리처럼 보이게
+  transmission: 1,
+  ior: 1.5,
+  thickness: 0.03, // m (굴절 근사)
+} as const;
+
+/**
+ * CC0 텍스처 (public/textures, 출처 CREDITS.md). 경로는 BASE_URL 기준.
+ * 단면은 트라이플래너: 조각 원래 자리 좌표 × interiorScale (반복 / m).
+ */
+export const TEXTURES = {
+  dir: 'textures/',
+  exterior: 'concrete-exterior',
+  interior: 'concrete-interior',
+  ground: 'ground',
+  sky: 'sky.hdr',
+  anisotropy: 8,
+  interiorScale: 0.8, // 반복 / m
+  triplanarSharpness: 4, // 법선 가중 지수: 클수록 축 사이 블렌드 폭이 좁다
+  groundScale: 0.25, // 반복 / m
+  groundTint: 0xc2bcb2,
+  groundVisualSize: 1200, // m. 물리 지면(SANDBOX.groundSize)보다 크게, 끝은 안개 속
 } as const;
 
 /** 절차적 건물 기본 파라미터와 부재 치수 (m) */
@@ -110,7 +145,7 @@ export const CANNON = {
   trimColor: 0xd8b03a,
   holeColor: 0x080808,
   hillColor: 0x5b7f39,
-  metalness: 0.35, // 환경맵이 없어서(Phase 6) 금속도가 높으면 거의 새까맣게 보인다
+  metalness: 0.7, // 환경맵(HDRI)을 반사한다
   roughness: 0.45,
   riseDepth: 5, // 등장 전 땅속 깊이
   riseSec: 1.4,
@@ -129,6 +164,7 @@ export const CANNON = {
   smokeLifeSec: 1.6,
   smokeSize: 1.4, // 연기 스프라이트 시작 크기 (m), 사는 동안 3배까지 커진다
   smokeSpeed: 3, // 연기가 포구에서 뿜어지는 속도 (m/s)
+  smokeColor: 0xb4b4b4,
 } as const;
 
 export const PROJECTILE = {
@@ -304,24 +340,121 @@ export const CAMERA = {
 
 export const RENDER = {
   shadowMapSize: 2048,
-  shadowCameraSize: 30, // 방향광 그림자 카메라 반경
+  shadowCameraSize: 30, // 방향광 그림자 카메라 반경 (포커스가 없을 때)
+  // 동적 그림자 범위 (fx/ShadowFit.ts): 건물 + 움직이는 잔해를 감싸는 반경을 이 사이로 자른다
+  shadowMinSize: 14,
+  shadowMaxSize: 60,
+  shadowMargin: 3, // 포커스 박스 바깥 여유 (m)
+  shadowSmoothingSec: 0.25, // 범위 변화 지수 스무딩 시간상수
+  shadowLightDistance: 80, // 포커스 중심에서 광원까지 거리 (그림자 카메라 near/far 기준)
   // 법선 방향 오프셋(m). 조각 이음매에서 표면 바로 아래 단면이 그림자 맵에 찍혀 생기는 줄무늬(acne) 방지
   shadowNormalBias: 0.03,
   maxPixelRatio: 2,
-  exposure: 1,
+  exposure: 0.72, // HDRI 하늘 + 태양 기준. 1이면 햇빛 받는 지면이 하얗게 날아간다
   fov: 50,
   near: 0.1,
   far: 1000,
 } as const;
 
 export const LIGHTING = {
-  background: 0x9fb4c8,
+  background: 0x9fb4c8, // HDRI가 없을 때
   sunColor: 0xfff1e0,
   sunIntensity: 3,
-  sunPosition: { x: 20, y: 35, z: 15 },
+  sunDirection: { x: 20, y: 35, z: 15 }, // 태양 쪽 방향 (크기 무관)
   hemiSkyColor: 0xbcd4ff,
   hemiGroundColor: 0x5a5046,
-  hemiIntensity: 1,
+  hemiIntensity: 1, // HDRI가 없을 때
+  // HDRI(pure sky)는 아래 반구가 비어 지면 반사광이 없다 → 반구광을 지면 반사 대용으로:
+  // 위는 어둡게(하늘은 HDRI가 준다), 아래는 햇빛 받은 지면 색. 이게 없으면 그늘 벽이 거의 검다
+  bounceSkyColor: 0x202428,
+  bounceGroundColor: 0xb8a68c,
+  bounceIntensity: 3.5, // 세로 벽은 아래 반구의 절반만 받아서 꽤 세야 한다
+  environmentIntensity: 1.2,
+  backgroundBlurriness: 0.02,
+  backgroundIntensity: 1,
+  fogColor: 0xc4ccd4, // 지면 끝이 지평선에 녹아들게
+  fogDensity: 0.005, // FogExp2: 60m ≈ 9%, 300m ≈ 90%
+} as const;
+
+/** 먼지 구름 (fx/Dust.ts) */
+export const DUST = {
+  maxPuffs: 512, // 풀 크기 (링 버퍼)
+  color: 0xb5ab9c,
+  // 폭발: 반경 r에 대해 퍼프 수 = blastPuffsPerMeter × r, 반경 방향 속도 blastSpeed × (0.4~1)
+  blastPuffsPerMeter: 14,
+  blastSpeed: 7,
+  blastLifeSec: 9,
+  blastSize: 3, // 시작 크기 (m), 사는 동안 growth배까지
+  // 조각이 지면에 부딪힘: minImpactSpeed 이상, 퍼프 수 = 1 + 질량 비례(최대 groundMaxPuffs)
+  minImpactSpeed: 3, // m/s
+  groundPuffsPerTonne: 2,
+  groundMaxPuffs: 4,
+  groundSpeed: 2.5,
+  groundLifeSec: 6,
+  groundSize: 1.8,
+  maxGroundImpactsPerFrame: 6, // 한 프레임에 이펙트를 일으키는 지면 충돌 수 상한
+  growth: 3.5,
+  drag: 1.4, // 공기 저항 (1/s)
+  rise: 0.35, // 떠오르는 속도 (m/s)
+  opacity: 0.7,
+  fadeExponent: 1.2, // 알파 = (1 - 수명비)^이 값
+  nearFade: 4, // 카메라 이 거리(m) 안쪽은 옅게 (화면을 가리지 않게)
+  // 근사 조명: 퍼프 위쪽/아래쪽 밝기 배수 (HDR 장면 밝기에 맞춘 값)
+  lightTop: 2.2,
+  lightBottom: 0.9,
+  maxPuffsPerBlast: 80,
+} as const;
+
+/** 시각 전용 부스러기 + 폭발 섬광 (fx/Sparks.ts). 물리 없음, 정점 셰이더에서 탄도 계산. */
+export const SHARDS = {
+  maxShards: { low: 2000, medium: 4000, high: 8000 },
+  sizeMin: 0.06, // m
+  sizeMax: 0.28,
+  color: 0x9c968c,
+  blastPerMeter: 70, // 폭발 반경 1m당 부스러기 수
+  blastSpeed: 16, // m/s (반경 방향, × 0.3~1)
+  upwardBias: 0.5,
+  groundPerImpact: 6,
+  groundSpeed: 4,
+  glassPerFragment: 3, // 유리 조각 하나가 떨어져 나갈 때
+  glassColor: 0xcfe6f2,
+  lifeSec: 7, // 이후 작아지며 사라진다
+  shrinkSec: 1,
+  spin: 12, // rad/s 최대
+  gravity: 9.81,
+  restitution: 0.25, // 지면에 한 번 튀는 속도 비율
+  // 섬광: 폭발 지점 HDR 점광 + 가산 구 (Bloom이 잡는다)
+  flashSec: 0.18,
+  flashLightIntensity: 1500, // candela (physical lights, 거리 제곱 감쇠)
+  flashLightDistance: 40,
+  flashColor: 0xffc27a,
+  flashBrightness: 8, // 스프라이트 색 배수 (HDR, 1 넘으면 Bloom)
+  flashSizePerRadius: 2.5, // 섬광 스프라이트 지름 = 폭발 반경 × 이 값
+} as const;
+
+/** 포스트 처리 (fx/PostFX.ts) */
+export const POSTFX = {
+  enabled: true,
+  ao: true,
+  aoRadius: 2, // m
+  aoIntensity: 2.5,
+  aoDistanceFalloff: 1,
+  aoHalfRes: true,
+  aoQuality: 'Medium' as 'Performance' | 'Low' | 'Medium' | 'High' | 'Ultra',
+  smaa: true,
+  bloom: true,
+  bloomIntensity: 0.6,
+  bloomThreshold: 1.1, // 톤매핑 전 HDR 휘도. 섬광처럼 1 넘는 것만
+  bloomSmoothing: 0.2,
+  vignette: true,
+  vignetteOffset: 0.3,
+  vignetteDarkness: 0.55,
+  // 충돌 펄스: 방사형 블러 + 색수차가 pulseSec 동안 감쇠
+  impactPulse: true,
+  pulseSec: 0.45,
+  pulseBlur: 0.06, // 화면 중심 쪽으로 늘이는 비율 (UV)
+  pulseAberration: 0.012, // UV
+  pulseSamples: 10,
 } as const;
 
 export const DEBUG = {

@@ -6,7 +6,6 @@
 // 조준 방향·포구 위치는 riser 애니메이션과 무관한 '다 솟은 자세' 기준 수식으로 계산한다
 // (컷신 끝 자세, 예상 궤적, 실제 발사가 항상 같은 값을 쓰도록).
 import {
-  CanvasTexture,
   CircleGeometry,
   CylinderGeometry,
   Group,
@@ -21,6 +20,7 @@ import {
 } from 'three';
 import { CANNON } from '../config';
 import { easeOutBack } from '../camera/easing';
+import { createPuffTexture } from '../fx/puffTexture';
 import { XRAY_HIDE } from '../fx/XRayView';
 import { aimDirection, clampAim } from './ballistics';
 
@@ -101,7 +101,8 @@ export class Cannon {
     }
 
     const smokeMaterial = new SpriteMaterial({
-      map: createSmokeTexture(),
+      map: createPuffTexture(),
+      color: CANNON.smokeColor,
       transparent: true,
       depthWrite: false,
     });
@@ -281,20 +282,4 @@ function createHole(): Mesh {
   hole.rotation.x = -Math.PI / 2;
   hole.position.y = 0.02;
   return hole;
-}
-
-/** 포연 스프라이트 텍스처: 가운데가 진한 회색 원형 그라디언트 */
-function createSmokeTexture(): CanvasTexture {
-  const size = 64;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0, 'rgba(200,200,200,1)');
-  g.addColorStop(0.5, 'rgba(160,160,160,0.6)');
-  g.addColorStop(1, 'rgba(140,140,140,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  return new CanvasTexture(canvas);
 }

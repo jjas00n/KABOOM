@@ -3,12 +3,14 @@
 import { Raycaster, Vector2, Vector3 } from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BUILDING, BUILDING_DEMO } from '../config';
+import type { Assets } from '../core/Assets';
 import type { Renderer } from '../core/Renderer';
 import { createRng } from '../fracture/seeds';
 import { BuildingSite } from '../game/BuildingSite';
+import type { TimeControl } from '../game/Game';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
-import { createOrbitControls, createStage, onCanvasClick } from './Stage';
+import { createOrbitControls, onCanvasClick, Stage } from './Stage';
 
 /** 건물 외벽 한 면: 바깥쪽 법선이 axis 축의 sign 방향 */
 export interface Facade {
@@ -26,6 +28,7 @@ const ALL_FACADES: readonly Facade[] = [
 
 export class BuildingDemo {
   readonly site: BuildingSite;
+  readonly stage: Stage;
   private readonly controls: OrbitControls;
   private readonly raycaster = new Raycaster();
   private readonly pointer = new Vector2();
@@ -35,14 +38,16 @@ export class BuildingDemo {
     private readonly renderer: Renderer,
     physics: PhysicsWorld,
     loading: LoadingOverlay,
+    assets: Assets | null = null,
+    time: TimeControl | null = null,
   ) {
-    createStage(renderer, physics);
+    this.stage = new Stage(renderer, physics, assets);
     this.controls = createOrbitControls(
       renderer,
       BUILDING_DEMO.cameraPosition,
       BUILDING_DEMO.cameraTarget,
     );
-    this.site = new BuildingSite(renderer.scene, physics, loading);
+    this.site = new BuildingSite(renderer.scene, physics, loading, assets, this.stage.ground, time);
     onCanvasClick(renderer.canvas, (x, y) => {
       this.pointer.set(x, y);
       this.explodeAtPointer();
@@ -58,6 +63,7 @@ export class BuildingDemo {
   update(dt: number): void {
     this.controls.update();
     this.site.update(dt);
+    this.stage.update(dt, this.site.bounds);
   }
 
   reset(): void {

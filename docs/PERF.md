@@ -112,3 +112,32 @@ Smash test (최악: 1290개 동시)
 
 - 덩어리(compound) 콜라이더 수가 많으면 접촉 비용이 크다 → 덩어리는 조각 hull 대신 단순 박스 몇 개로 근사.
 - 하중 계산 정렬(Float32 비교 정렬)을 버킷/기수 정렬로.
+
+## 2026-10-27 — Phase 6 사실적 그래픽 (텍스처·HDRI·후처리·이펙트)
+
+### 측정 환경과 한계
+
+- 이번 측정 PC에는 **Intel 내장 GPU만** 있다 (`ANGLE (Intel, Intel(R) Graphics (0x0000A7AB) Direct3D11)`).
+  위 Phase 3~4 기록(RX 6800)과 직접 비교할 수 없다. headless Chrome은 이 GPU에서 main 브랜치도 약 16fps로
+  묶여 있어 **절대 FPS는 의미가 없고, 같은 조건의 전후 차이만** 본다.
+- 건물: seed 1, 6층, 4×3칸, Medium. 카메라 고정(34, 16, 30 → 건물 중심). 멀쩡한 건물(idle).
+
+### 결과 (idle, 디버그 GUI `Perf` 평균)
+
+|                   | Frame ms    | Render ms (CPU 제출) | Physics ms |
+| ----------------- | ----------- | -------------------- | ---------- |
+| main (Phase 5)    | 64.6        | 15.3 ~ 16.6          | 5.6 ~ 6.4  |
+| Phase 6 (전부 켬) | 73.7 ~ 74.1 | 21.2 ~ 22.8          | 5.6 ~ 5.9  |
+
+- 프레임당 약 +10ms (내장 GPU, headless). 렌더 CPU +6ms는 후처리 패스(N8AO, Bloom 밉 체인, SMAA 3패스)와
+  지면/HDRI 배경 드로우, 그림자 맵 갱신.
+- 후처리 토글(AO / SMAA·Bloom / 전부 끔)별 FPS 차이는 headless 측정 잡음(±2fps)보다 작게 나왔다
+  → 이 환경의 병목은 후처리가 아니다.
+- 이펙트(먼지 512, 부스러기 4000)는 인스턴스 드로우콜 각 1개, CPU는 emit한 칸만 GPU로 올린다(`ParticleRing`).
+
+### 데스크톱 GPU에서 확인할 것 (미측정)
+
+- Medium 붕괴(Smash test) 중 55fps 이상인지. 모자라면 효과 큰 순서:
+  1. `POSTFX.aoQuality` 'Low'/'Performance' (또는 Visuals → SSAO 끄기)
+  2. 유리 `transmission` → `reflective` (High 프리셋 기본이 transmission)
+  3. `SHARDS.maxShards` 축소, `RENDER.shadowMapSize` 1024

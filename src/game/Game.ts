@@ -13,9 +13,11 @@ import { ChaseCam } from '../camera/ChaseCam';
 import { CutsceneCam } from '../camera/CutsceneCam';
 import { SpectateCam } from '../camera/SpectateCam';
 import { CAMERA, CANNON, HIT_STOP, PROJECTILE, SANDBOX, XRAY } from '../config';
+import type { Assets } from '../core/Assets';
 import type { Renderer } from '../core/Renderer';
+import type { PostFX } from '../fx/PostFX';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
-import { createStage } from '../sandbox/Stage';
+import { Stage } from '../sandbox/Stage';
 import { HUD } from '../ui/HUD';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
 import { muzzleSpeed } from './ballistics';
@@ -47,12 +49,14 @@ export class Game {
   readonly rig: CameraRig;
   readonly cannon: Cannon;
   readonly projectile: Projectile;
+  readonly stage: Stage;
   /** 파워 0~1 */
   power: number = PROJECTILE.defaultPower;
   /** 건물이 준비됐는지 (생성 중엔 대포 못 씀) */
   ready = false;
 
   private readonly hud: HUD;
+  private readonly postfx: PostFX;
   private readonly orbit: OrbitControls;
   private readonly orbitCam: SpectateCam;
   private readonly aimCam: AimCam;
@@ -92,10 +96,12 @@ export class Game {
     physics: PhysicsWorld,
     private readonly time: TimeControl,
     loading: LoadingOverlay,
+    assets: Assets | null = null,
   ) {
     const { scene, camera, canvas } = renderer;
-    createStage(renderer, physics);
-    this.site = new BuildingSite(scene, physics, loading);
+    this.postfx = renderer.postfx;
+    this.stage = new Stage(renderer, physics, assets);
+    this.site = new BuildingSite(scene, physics, loading, assets, this.stage.ground, time);
     this.cannon = new Cannon(scene, this.buildingCenter);
     this.projectile = new Projectile(scene, physics);
     this.trajectory = new TrajectoryLine(scene);
@@ -107,7 +113,7 @@ export class Game {
     this.orbit.enableDamping = true;
     this.orbitCam = new SpectateCam(this.orbit);
     this.aimCam = new AimCam(this.cannon);
-    this.killCam = new XRayKillCam(scene, this.rig, time, this.projectile);
+    this.killCam = new XRayKillCam(scene, this.rig, time, this.projectile, this.postfx);
     this.hud = new HUD(
       () => this.requestCannon(),
       () => this.requestIdle(),
@@ -161,6 +167,7 @@ export class Game {
     this.killCam.update(dt);
     this.cannon.update(dt);
     this.site.update(dt);
+    this.stage.update(dt, this.site.bounds);
     this.rig.update(dt);
   }
 
@@ -275,6 +282,7 @@ export class Game {
       this.hitStopApplied = true;
     }
     this.rig.shake.add(CAMERA.impactTrauma);
+    if (!this.killCam.active) this.postfx.pulse();
   }
 
   /**

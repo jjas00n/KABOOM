@@ -65,6 +65,7 @@ export function runFracture(
 
   return cells.map((cell, i) => {
     const member = cellMember[i]!;
-    return buildFragment(cell, uvScale, member, jobs[member]!.material ?? MATERIAL.concrete);
+    const job = jobs[member]!;
+    return buildFragment(cell, uvScale, member, job.material ?? MATERIAL.concrete, job.box.min);
   });
 }
