@@ -1,5 +1,5 @@
 // 경제 HUD (왼쪽 위): 현재 돈(굴러가는 카운터), 이번 건물 수익, 파괴율 바(완파 임계값 표시).
-import { ECONOMY } from '../config';
+import { ECONOMY, FINALE } from '../config';
 import type { Economy } from '../economy/Economy';
 import { formatMoney } from './format';
 
@@ -22,8 +22,8 @@ export class EconomyHud {
     this.barFill.className = 'eco-bar-fill';
     const mark = document.createElement('div');
     mark.className = 'eco-bar-mark';
-    mark.style.left = `${ECONOMY.completionThreshold * 100}%`;
-    mark.title = `Complete at ${Math.round(ECONOMY.completionThreshold * 100)}%`;
+    mark.style.left = `${FINALE.threshold * 100}%`;
+    mark.title = `Complete at ${Math.round(FINALE.threshold * 100)}%`;
     bar.append(this.barFill, mark);
     this.barLabel.className = 'eco-bar-label';
     this.root.append(this.money, this.building, bar, this.barLabel);
@@ -49,7 +49,7 @@ export class EconomyHud {
     this.building.textContent = `This building ${formatMoney(economy.wallet.buildingTotal)}`;
     const rate = economy.destructionRate;
     this.barFill.style.width = `${rate * 100}%`;
-    this.barFill.classList.toggle('done', rate >= ECONOMY.completionThreshold);
+    this.barFill.classList.toggle('done', rate >= FINALE.threshold);
     this.barLabel.textContent = `Destroyed ${Math.floor(rate * 100)}%`;
   }
 }

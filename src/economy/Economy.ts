@@ -61,12 +61,16 @@ export class Economy {
   }
 
   /** 조각 분리 → 지급. source로 파편/피날레를 구분한다 */
-  release(frags: readonly number[], source: IncomeSource = 'fragments'): Payout | null {
+  release(
+    frags: readonly number[],
+    source: IncomeSource = 'fragments',
+    silent = false,
+  ): Payout | null {
     const ledger = this.ledger;
     if (!ledger) return null;
     const started = performance.now();
     const p = this.source?.positions;
-    const listener = this.onPayout;
+    const listener = silent ? null : this.onPayout;
     const payout = ledger.release(
       frags,
       this.modifiers.total,
@@ -89,7 +93,17 @@ export class Economy {
 
   /** 7-2 피날레: 남은 조각을 피날레 수익으로 한 번에 정산 */
   releaseFinale(frags: readonly number[]): Payout | null {
-    return this.release(frags, 'finale');
+    // 조각별 팝업 없이 (피날레는 화면 중앙에 합계 하나를 크게 띄운다)
+    return this.release(frags, 'finale', true);
+  }
+
+  /** 완료 보너스: 건물 전체 가치 × fraction × 배율 (7-3 주문 보상 자리). 반환: 지급액 */
+  payCompletionBonus(fraction: number): number {
+    const ledger = this.ledger;
+    if (!ledger) return 0;
+    const amount = ledger.totalValue * this.modifiers.total * fraction;
+    this.wallet.add(amount, 'bonus');
+    return amount;
   }
 
   /** 물리 시간 dt만큼. 파괴율은 CollapseSolver 갱신 주기에 맞춰서만 다시 읽는다 */

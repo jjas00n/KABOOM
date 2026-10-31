@@ -46,6 +46,8 @@ const STRIDE = 4096;
 
 export class MoneyPopups {
   private readonly root = document.createElement('div');
+  /** 화면 중앙의 큰 숫자 (피날레 정산) */
+  private readonly big = document.createElement('div');
   private readonly popups: Popup[] = [];
   private readonly bins = new Map<number, Bin>();
   private readonly spare: Bin[] = [];
@@ -64,7 +66,33 @@ export class MoneyPopups {
       this.root.append(el);
       this.popups.push({ el, age: Infinity, x: 0, y: 0, scale: 1 });
     }
+    this.big.className = 'money-big';
+    this.big.hidden = true;
+    this.root.append(this.big);
     document.body.append(this.root);
+  }
+
+  /** 화면 중앙에 크게: '+$12,345' 와 설명 한 줄 (CSS 애니메이션으로 터졌다가 사라진다) */
+  showBig(amount: number, label: string): void {
+    this.big.replaceChildren();
+    const value = document.createElement('div');
+    value.textContent = `+${formatMoney(amount)}`;
+    const caption = document.createElement('div');
+    caption.className = 'money-big-label';
+    caption.textContent = label;
+    this.big.append(value, caption);
+    this.big.hidden = false;
+    // Web Animations: 강제 레이아웃 없이 처음부터 (터졌다가 위로 사라진다)
+    this.big.animate(
+      [
+        { opacity: 0, transform: 'translate(-50%, -50%) scale(0.3)' },
+        { opacity: 1, transform: 'translate(-50%, -50%) scale(1.25)', offset: 0.12 },
+        { transform: 'translate(-50%, -50%) scale(1)', offset: 0.22 },
+        { opacity: 1, transform: 'translate(-50%, -60%) scale(1)', offset: 0.8 },
+        { opacity: 0, transform: 'translate(-50%, -70%) scale(0.95)' },
+      ],
+      { duration: 3200, easing: 'ease-out', fill: 'forwards' },
+    );
   }
 
   /** 지급 하나 (월드 위치). 월드 격자 칸에 더하기만 한다 (투영은 update에서) */
@@ -153,6 +181,7 @@ export class MoneyPopups {
 
   /** 건물 교체: 대기 중인 묶음과 떠 있는 숫자를 지운다 */
   clear(): void {
+    this.big.hidden = true;
     for (const bin of this.bins.values()) this.spare.push(bin);
     this.bins.clear();
     for (const cell of this.pending.values()) this.spareCells.push(cell);

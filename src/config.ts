@@ -474,7 +474,6 @@ export const ECONOMY = {
   rareMultiplier: 15,
   rareSalt: 0x9e3779b9, // 건물 seed와 섞는 값
   rareColor: { r: 1.35, g: 1.05, b: 0.35 }, // 금빛 바탕색 (조각 색에 곱한다)
-  completionThreshold: 0.85, // 파괴율 바의 임계값 표시 (7-2 완파 피날레)
   // +$ 팝업 (fx/MoneyPopups.ts)
   popupBinSec: 0.2, // 이 시간 동안 같은 화면 셀의 수익을 묶어 하나로
   popupCellPx: 140, // 화면 공간 셀 크기
@@ -487,6 +486,40 @@ export const ECONOMY = {
   // HUD 돈 카운터가 굴러가는 속도
   counterSmoothingSec: 0.35, // 지수 스무딩 시간상수
   counterMinSpeed: 30, // $/s: 작은 차이도 이 속도 이상으로 따라간다
+} as const;
+
+/** 완파 피날레 (game/Finale.ts, fx/FinaleBurst.ts, Phase 7-2) */
+export const FINALE = {
+  threshold: 0.85, // 파괴율이 이 이상이면 남은 건물을 한꺼번에 (건물당 1회)
+  // 1) 완파 순간
+  hitStopSec: 0.4, // 실제 시간
+  hitStopScale: 0.08,
+  crackRampSec: 0.6, // 서 있는 조각 균열을 1까지 올리는 시간
+  quakeAmplitude: 0.05, // m: 렌더 전용 진동 (균열 확산 동안)
+  shakeTrauma: 1,
+  // 2) 붕괴 웨이브 (위 → 아래)
+  waveSpeed: 20, // m/s (물리 시간): 웨이브 높이가 내려가는 속도 (6층 ≈ 1.1초 → 슬로모션으로 약 2.2초)
+  maxDetachPerStep: 90, // 한 물리 스텝에 분리하는 조각 상한
+  removalsPerStep: 30, // 숨긴 조각의 물리 바디를 한 스텝에 지우는 수 (Rapier 제거가 비싸서 나눈다)
+  maxPhysics: 600, // 실제 물리 dynamic으로 떨어뜨리는 조각 수 (부피 큰 순)
+  maxDynamicTotal: 1000, // 동시 dynamic 상한 (PERF.md 기준)
+  pushSpeed: 4, // m/s: 물리 조각에 주는 바깥 방향 속도
+  // GPU 파편 (물리 대신)
+  particleMax: 9000,
+  particleLifeSec: 4.5,
+  burstSpeed: 9, // m/s: 바깥으로 튀는 속도 (× 0.3~1)
+  burstUp: 4, // m/s: 위로 더하는 속도
+  dustPuffsPerFloor: 6,
+  // 3) 슬로모션 + 시네마틱 카메라
+  slowMotion: 0.5,
+  cinematicRadius: 42,
+  cinematicHeight: 18,
+  cinematicSpeed: 0.35, // rad/s
+  cinematicZoomPerSec: 0.08,
+  // 4) 마무리
+  outroSec: 1.2, // 실제 시간: 웨이브가 끝나고 결과 화면까지
+  // 보상
+  completionBonusFraction: 0.3, // 완료 보너스 = 건물 전체 가치 × 이 값 (7-3 주문 보상 자리)
 } as const;
 
 /** 포인트 라이트 풀 (fx/LightPool.ts): 개수가 바뀌면 모든 재질 셰이더가 다시 컴파일되므로 고정 */

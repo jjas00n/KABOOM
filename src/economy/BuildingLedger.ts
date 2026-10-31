@@ -39,6 +39,8 @@ export class BuildingLedger {
   paidMass = 0;
   /** 지급액 합 (배율 적용 후, $) */
   paidAmount = 0;
+  /** 대상 조각 바탕 가치 합 (배율 전, $): 완료 보너스 기준 */
+  readonly totalValue: number;
 
   constructor(nodes: LedgerNodes, seed: number, rareEnabled?: boolean) {
     const n = nodes.count;
@@ -59,6 +61,9 @@ export class BuildingLedger {
         fragmentValue(this.mass[i]!, nodes.kind(i), nodes.material(i), 1, this.rare[i] === 1) *
         (1 + DURABILITY.valuePerPoint * (nodes.durability?.(i) ?? 0));
     }
+    let value = 0;
+    for (let i = 0; i < n; i++) if (this.counted[i]) value += this.baseValue[i]!;
+    this.totalValue = value;
   }
 
   /**

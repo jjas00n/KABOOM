@@ -95,6 +95,8 @@ export class BuildingSite {
   damageEffects: boolean = DAMAGE_VISUAL.enabled;
   showColliders = false;
   damageHeatmap = false;
+  /** 피날레 진행 중 (불변 조건 검사를 쉰다) */
+  finaleActive = false;
   /** 디버그: 조각 색을 남은 내구도로 (0 초록 → 높음 빨강) */
   durabilityHeatmap = false;
   /** 내구도 켬/끔 (비교·측정용, 지금 건물에 바로 적용) */
@@ -229,7 +231,8 @@ export class BuildingSite {
     }
     const shown = this.colliders.update(dt, d);
     this.invariantAcc += dt;
-    if (shown || this.invariantAcc >= DAMAGE_VISUAL.invariantCheckSec) {
+    // 피날레 중엔 렌더 전용 진동·대량 정리로 일부러 어긋나므로 검사를 쉰다
+    if (!this.finaleActive && (shown || this.invariantAcc >= DAMAGE_VISUAL.invariantCheckSec)) {
       this.invariantAcc = 0;
       const report = shown ?? checkInvariants(d);
       this.damageStats.violations = violationCount(report);
@@ -273,6 +276,12 @@ export class BuildingSite {
   setShowColliders(enabled: boolean): void {
     this.showColliders = enabled;
     this.colliders.setEnabled(enabled);
+  }
+
+  /** 피날레 연출: 균열 하한(0~1)과 진동 진폭(m) */
+  setFinaleLook(crack: number, quake: number): void {
+    this.materials.crackFloor.value = crack;
+    this.materials.quake.value = quake;
   }
 
   /** 디버그: 조각 색을 damage로 (초록 0 → 빨강 1) */
@@ -370,6 +379,9 @@ export class BuildingSite {
     this.burning = null;
     this.damageView = null;
     this.rebar.clear();
+    this.finaleActive = false;
+    this.materials.quake.value = 0;
+    this.materials.crackFloor.value = 0;
     this.warned = false;
     this.system?.dispose();
     this.system = null;

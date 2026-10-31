@@ -44,7 +44,12 @@ IDLE ─[대포/마법사 버튼]→ CUTSCENE(launcher) ─(카메라 스플라�
 AIMING ─[발사(마법사는 충전 0.6s 뒤)]→ PROJECTILE_CAM ─(충돌)→ IMPACT(hit-stop ~0.3s) → SPECTATE
 SPECTATE ─[대포/마법사 버튼]→ CUTSCENE (부서진·불타는 건물에 재발사 가능)
 SPECTATE ─[뒤로]→ IDLE (건물 유지),  SPECTATE ─[리셋]→ IDLE (건물 재생성)
+IMPACT·SPECTATE ─(파괴율 ≥ 85%, 건물당 1회)→ FINALE(완파 피날레 ~4s, 스킵 가능) → RESULT ─[다음 주문]→ IDLE (새 건물)
 ```
+- **완파 피날레**(`game/Finale.ts` 정리·정산, `game/FinaleDirector.ts` 연출, `economy/Completion.ts` 1회 판정):
+  - 남은 조각 가치를 'finale'로 한 번에 정산하고 완료 보너스를 준다.
+  - 위→아래 웨이브로 분리한다 (스텝당 상한). 부피 큰 조각만 물리(동시 dynamic ≤ 1000), 나머지는 숨기고 GPU 파편(`fx/FinaleBurst.ts`)으로 대체한다.
+  - 결과 화면(`ui/ResultScreen.ts`, `game/RunStats.ts`) 합계 = 지갑 증가분.
 - 상태 머신은 `src/game/StateMachine.ts` 한 곳에서만 상태를 바꾼다. 카메라·입력·UI는 상태 변경 이벤트를 구독.
 - **발사대(Launcher)**: 대포(`Cannon`)와 파이어볼 마법사(`Wizard`, 건물 기준 대포 반대편 바위 위)가
   `game/Launcher.ts` 인터페이스를 구현한다. `transition(CUTSCENE, launcherId)`로 상태 머신이 선택도 같이 바꾸고
@@ -89,13 +94,15 @@ src/
   destruction/ Explosion.ts(임펄스·BlastShape), CollapseSolver.ts(지지 BFS), DebrisManager.ts(정리/수명),
                FireSystem.ts(화재 확산·연소·약화, 순수 로직), DamageModel.ts(조각 손상도·자세·느슨 판정),
                DamageView.ts(손상 자세·텍스처 적용), Invariants.ts(불변 조건), Durability.ts(조각 내구도)
-  economy/     Wallet.ts, Modifiers.ts, FragmentValue.ts, BuildingLedger.ts, Economy.ts (순수 로직)
+  economy/     Wallet.ts, Modifiers.ts, FragmentValue.ts, BuildingLedger.ts, Economy.ts, Completion.ts (순수 로직)
   game/        StateMachine.ts, Launcher.ts(발사대 인터페이스), Cannon.ts, Wizard.ts, fireball.ts,
-               Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결)
+               Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결),
+               Finale.ts, FinaleDirector.ts, RunStats.ts (완파 피날레·결과)
   camera/      CutsceneCam.ts, AimCam.ts, ChaseCam.ts, SpectateCam.ts, CameraShake.ts
   fx/          Dust.ts, Sparks.ts, Fire.ts(불꽃·연기·불씨), FireballVisual.ts, LightPool.ts(고정 개수), Rebar.ts,
-               MoneyPopups.ts(+$ 묶음 팝업), PostFX.ts
-  ui/          HUD(대포 버튼, 파워 게이지, 리셋, 품질 선택), EconomyHud(돈·이번 건물 수익·파괴율 바), 디버그 GUI
+               MoneyPopups.ts(+$ 묶음 팝업), FinaleBurst.ts(피날레 GPU 파편), PostFX.ts
+  ui/          HUD(대포 버튼, 파워 게이지, 리셋, 품질 선택), EconomyHud(돈·이번 건물 수익·파괴율 바),
+               ResultScreen(완파 배너·결과 화면), 디버그 GUI
   audio/       AudioManager.ts
 tests/         vitest 단위 테스트
 ```

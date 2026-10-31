@@ -5,12 +5,15 @@ import { DURABILITY, DUST, type QualityPreset } from '../config';
 import type { Vec3Like } from '../fracture/polyhedron';
 import { Dust } from './Dust';
 import { Fire } from './Fire';
+import { FinaleBurst } from './FinaleBurst';
 import { Sparks } from './Sparks';
 
 export class Effects {
   readonly dust: Dust;
   readonly sparks: Sparks;
   readonly fire: Fire;
+  /** 완파 피날레 GPU 파편 */
+  readonly burst: FinaleBurst;
   /** 물리 시간 (s) */
   private time = 0;
   /** 이번 프레임에 일으킨 지면 충돌 이펙트 수 (상한 DUST.maxGroundImpactsPerFrame) */
@@ -20,6 +23,7 @@ export class Effects {
     this.dust = new Dust(scene);
     this.sparks = new Sparks(scene, quality);
     this.fire = new Fire(scene);
+    this.burst = new FinaleBurst(scene);
   }
 
   setQuality(quality: QualityPreset): void {
@@ -64,6 +68,7 @@ export class Effects {
     this.dust.update(this.time);
     this.sparks.update(this.time);
     this.fire.update(this.time);
+    this.burst.update(this.time);
   }
 
   /** 건물 재생성: 남은 파티클을 없앤다 */
@@ -71,5 +76,6 @@ export class Effects {
     this.dust.clear();
     this.sparks.clear();
     this.fire.clear();
+    this.burst.clear();
   }
 }

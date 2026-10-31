@@ -71,6 +71,8 @@ function createGame(
         .listen();
       eco.add(game.economy, 'rareEnabled').name('Rare fragments (next building)').listen();
       eco.add(game.economyStats, 'ms').name('Economy ms / frame').decimals(3).disable().listen();
+      eco.add({ fill: () => game.fillToThreshold() }, 'fill').name('Fill to threshold');
+      eco.add({ trigger: () => game.triggerFinale() }, 'trigger').name('Trigger finale');
       addBuildingGui(gui, game.site, () => game.reset());
       addFireGui(gui, game.site);
       addVisualsGui(gui, renderer.postfx, game.site);

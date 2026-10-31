@@ -25,7 +25,9 @@ export class DamageView {
   /** 손상이 바뀔 때마다 1씩 (철근 재배치 판단) */
   revision = 0;
   private enabled: boolean = DAMAGE_VISUAL.enabled;
-  private readonly queue: number[] = [];
+  /** 갱신 대기열 (head부터 꺼낸다: shift()는 O(n)이라 큰 대기열에서 프레임이 멈췄다) */
+  private queue: number[] = [];
+  private head = 0;
   private readonly queued: Uint8Array;
   private readonly phase: Float32Array;
   /** 마지막 피격 시각 (fireTime 시계, 0 = 없음) */
@@ -72,8 +74,8 @@ export class DamageView {
   update(): void {
     const { graph, damage, fragments, durability } = this.system;
     let moved = 0;
-    while (this.queue.length > 0 && moved < DAMAGE_VISUAL.maxTeleportsPerFrame) {
-      const i = this.queue.shift()!;
+    while (this.head < this.queue.length && moved < DAMAGE_VISUAL.maxTeleportsPerFrame) {
+      const i = this.queue[this.head++]!;
       this.queued[i] = 0;
       const attached = graph.attached[i] === 1;
       const loss = durability.lossFraction(i);
@@ -114,7 +116,14 @@ export class DamageView {
     }
     this.stats.teleports = moved;
     this.stats.uploads = fragments.meshes.flushDamage();
-    this.stats.pending = this.queue.length;
+    if (this.head >= this.queue.length) {
+      this.queue.length = 0;
+      this.head = 0;
+    } else if (this.head > 1024) {
+      this.queue = this.queue.slice(this.head);
+      this.head = 0;
+    }
+    this.stats.pending = this.queue.length - this.head;
   }
 
   /** 내구도가 깎인 만큼 조각별 고정 방향으로 살짝 밀고 돌린다 (offset·quat에 더함) */

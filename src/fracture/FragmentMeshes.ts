@@ -45,6 +45,10 @@ export interface FragmentMaterials {
   damageMaps: { exterior: { value: DataTexture }; interior: { value: DataTexture } };
   /** 손상 외관 효과 켬(1)/끔(0) */
   damageOn: { value: number };
+  /** 피날레 진동 진폭 (m, 렌더 전용) */
+  quake: { value: number };
+  /** 피날레 균열 확산: 모든 조각 균열 하한 0~1 (조각별 텍스처 갱신 없이) */
+  crackFloor: { value: number };
 }
 
 /** 외부면 정점 속성: 폴리곤 경계 1, 중심 0 (균열 위치) */
@@ -99,8 +103,10 @@ export function createFragmentMaterials(
     interior: { value: emptyDamageMap() },
   };
   const damageOn = { value: DAMAGE_VISUAL.enabled ? 1 : 0 };
-  addSurfaceFx(exterior, fireTime, damageMaps.exterior, damageOn);
-  addSurfaceFx(interior, fireTime, damageMaps.interior, damageOn);
+  const quake = { value: 0 };
+  const crackFloor = { value: 0 };
+  addSurfaceFx(exterior, fireTime, damageMaps.exterior, damageOn, quake, crackFloor);
+  addSurfaceFx(interior, fireTime, damageMaps.interior, damageOn, quake, crackFloor);
   const glass = new MeshPhysicalMaterial({
     color: GLASS.color,
     roughness: GLASS.roughness,
@@ -108,7 +114,7 @@ export function createFragmentMaterials(
     ior: GLASS.ior,
   });
   setGlassMode(glass, glassMode);
-  return { exterior, interior, glass, fireTime, damageMaps, damageOn };
+  return { exterior, interior, glass, fireTime, damageMaps, damageOn, quake, crackFloor };
 }
 
 /**
@@ -201,6 +207,7 @@ uniform highp sampler2D uDamageMap;
 uniform float uDamageOn;
 uniform float uSwayAmp;
 uniform float uSwayHz;
+uniform float uQuake;
 attribute float ${RIM_ATTRIBUTE};
 varying vec3 vEmberPos;
 varying float vRim;
@@ -221,6 +228,9 @@ vDamage = vec4( 0.0 );
 {
   float kPhase = vDamage.b * 6.2832 + uFireTime * uSwayHz * 6.2832;
   transformed += vec3( sin( kPhase ), 0.0, cos( kPhase * 0.77 ) ) * uSwayAmp * vDamage.g;
+  // 피날레 진동: 조각마다 다른 위상으로 빠르게 떨린다 (렌더 전용)
+  float kQ = uFireTime * 47.0 + vDamage.b * 31.0;
+  transformed += vec3( sin( kQ ), sin( kQ * 1.31 + 1.7 ) * 0.5, cos( kQ * 0.83 ) ) * uQuake;
 }`;
 
 const EMBER_FRAGMENT_PARS = /* glsl */ `
@@ -232,6 +242,7 @@ uniform float uDamageCrackStrength;
 uniform float uDamageNoise;
 uniform float uDamageGrime;
 uniform float uDamageEdgeNormal;
+uniform float uCrackFloor;
 uniform float uFlashSec;
 uniform float uFlashBrightness;
 varying vec3 vEmberPos;
@@ -243,7 +254,7 @@ ${NOISE_GLSL}`;
 // 가벼운 손상엔 균열이 없고, damage가 클수록 굵어진다. 굵기를 경계를 따라 노이즈로 바꿔(점선처럼 끊지 않고)
 // 들쭉날쭉한 깨진 선처럼 보이게 한다.
 const DAMAGE_COLOR = /* glsl */ `
-float kDamage = vDamage.r;
+float kDamage = max( vDamage.r, uCrackFloor );
 if ( kDamage > 0.001 ) {
   float kAmount = smoothstep( 0.15, 1.0, kDamage );
   float kN = kFbm( vEmberPos * uDamageNoise );
@@ -294,6 +305,8 @@ function addSurfaceFx(
   fireTime: { value: number },
   damageMap: { value: DataTexture },
   damageOn: { value: number },
+  quake: { value: number },
+  crackFloor: { value: number },
 ): void {
   const previous = material.onBeforeCompile.bind(material);
   const previousKey = material.customProgramCacheKey.bind(material);
@@ -306,6 +319,8 @@ function addSurfaceFx(
     u.uEmberScale = { value: FIRE.emberNoiseScale };
     u.uDamageMap = damageMap;
     u.uDamageOn = damageOn;
+    u.uQuake = quake;
+    u.uCrackFloor = crackFloor;
     u.uSwayAmp = { value: DAMAGE_VISUAL.swayAmplitude };
     u.uSwayHz = { value: DAMAGE_VISUAL.swayHz };
     u.uDamageCrackWidth = { value: DAMAGE_VISUAL.crackWidth };
