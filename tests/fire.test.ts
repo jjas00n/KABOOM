@@ -156,7 +156,8 @@ describe('FireSystem', () => {
     );
     const solver = new CollapseSolver(g.graph);
     solver.update(0, true);
-    const fire = fireOn(g, [0, 1000]);
+    // 메커니즘 확인용 약화 값 (게임 튜닝값은 화재만으로는 붕괴하지 않을 만큼 보수적이다)
+    const fire = fireOn(g, [0, 1000], { weakenRate: 0.1, minStrength: 0.12 });
     fire.addHeat({ x: 0, y: 1, z: 0 }, 0.1, 1);
     const islands: number[][] = [];
     let collapsedAt = -1;

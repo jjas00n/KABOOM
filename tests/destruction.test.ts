@@ -152,7 +152,7 @@ describe('DestructionSystem', () => {
     physics.add(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(target.x, target.y, target.z + 3)
-        .setLinvel(0, 0, -40)
+        .setLinvel(0, 0, -60) // chainJoulesPerKg × 지지 강도보다 충분히 큰 에너지
         .setCcdEnabled(true),
       RAPIER.ColliderDesc.ball(0.4)
         .setDensity(2000)

@@ -321,8 +321,8 @@ export const FIRE = {
   fuelJitter: 0.35, // 조각마다 ± 비율
   charRate: 0.12, // 타는 동안 charred 증가 /s
   // 구조 약화: 타는 조각에 붙은 엣지 용량이 초당 이 비율씩 줄어든다
-  weakenRate: 0.1,
-  minStrength: 0.12, // 원래 용량 대비 하한
+  weakenRate: 0.05,
+  minStrength: 0.6, // 원래 용량 대비 하한
   // 떨어져 나간 조각
   settledBurnRate: 4, // 굳은 조각은 연료를 이 배수로 빨리 태워 꺼진다
   // 대포 폭발 반경 안에 타는 조각이 있으면 주변에 열 추가 (불씨가 튐)
@@ -393,15 +393,15 @@ export const DAMAGE_VISUAL = {
   swayAmplitude: 0.006, // m: 매달린 조각 흔들림 (불변 조건 1cm 이하)
   swayHz: 1.3,
   // 느슨한 조각 낙하
-  looseFactor: 4, // 남은 엣지 강도 합 < 자기 무게 × 이 값이면 떨어진다
+  looseFactor: 1.5, // 남은 엣지 강도 합 < 자기 무게 × 이 값이면 떨어진다
   looseMaxEdges: 1, // 남은 엣지가 이 이하이고
-  looseDamage: 0.6, // damage가 이 이상이어도 떨어진다
-  maxLooseDropsPerStep: 4, // 한 물리 스텝에 떨어뜨리는 상한 (한꺼번에 몰리지 않게)
-  looseWakeRange: 1.8, // 폭발 반경 × 이 값 안의 손상 조각은 작은 충격에도 떨어진다
-  looseWakeDamage: 0.35, // 위 범위에서 이 damage 이상이면
-  chainDamage: 0.45, // 잔해에 부딪힌 조각이 이 damage 이상이면 에너지와 무관하게 떨어진다
+  looseDamage: 0.85, // damage가 이 이상이어도 떨어진다
+  maxLooseDropsPerStep: 2, // 한 물리 스텝에 떨어뜨리는 상한 (한꺼번에 몰리지 않게)
+  looseWakeRange: 1.3, // 폭발 반경 × 이 값 안의 손상 조각은 작은 충격에도 떨어진다
+  looseWakeDamage: 0.6, // 위 범위에서 이 damage 이상이면
+  chainDamage: 0.7, // 잔해에 부딪힌 조각이 이 damage 이상이면 에너지와 무관하게 떨어진다
   // 이미 손상된 곳을 맞혔을 때
-  damagedCoreBoost: 0.6, // 코어 반경 비율에 + damage × 이 값 (손상 조각은 더 넓게 떨어져 나간다)
+  damagedCoreBoost: 0.35, // 코어 반경 비율에 + damage × 이 값 (손상 조각은 더 넓게 떨어져 나간다)
   penetrationDamageFactor: 0.7, // 관통 저항 × (1 - 이 값 × 주변 damage)
   penetrationSampleRadius: 1.5, // 주변 damage 표본 반경 (m)
   // 철근 노출
@@ -479,8 +479,8 @@ export const STRUCTURE = {
   jointFactor: 0.5, // 부재 사이 이음매는 부재 안보다 약하다
   // 멀쩡한 건물에서 계산한 하중 × intactSafety 보다는 항상 강하게: 자중으로는 무너지지 않는다.
   // 기둥이 빠져 하중이 이 배수 넘게 몰리는 엣지부터 끊긴다.
-  intactSafety: 1.6,
-  failureTime: 0.5, // 과부하율 2배(하중 = 강도 × 2)인 엣지가 끊기기까지 걸리는 시간 (s)
+  intactSafety: 2.0,
+  failureTime: 1.0, // 과부하율 2배(하중 = 강도 × 2)인 엣지가 끊기기까지 걸리는 시간 (s)
   // 엣지가 끊길 때마다 지지/하중을 다시 계산하면(≈3ms) 붕괴 중 매 스텝 돌게 된다 → 이 간격으로 묶는다.
   // 폭발 직후는 force로 즉시 계산.
   solveIntervalSec: 0.1,
@@ -498,7 +498,7 @@ export const STRUCTURE = {
   minChunkFragments: 3, // 분해 후 이보다 작은 덩어리는 개별 조각으로
   // 연쇄: 움직이는 조각이 서 있는 조각에 부딪힐 때 운동에너지(J) >
   // chainJoulesPerKg × 맞은 조각이 버티는 엣지 강도 합(kg) 이면 맞은 조각이 떨어져 나간다
-  chainJoulesPerKg: 0.5,
+  chainJoulesPerKg: 1.0,
   chainMinSpeed: 4, // 이보다 느린 충돌은 검사하지 않는다 (m/s)
   wakeMargin: 1, // 덩어리가 떨어질 때 그 AABB + 이 여유 안의 굳은 잔해를 다시 깨운다 (m)
   // 폭발 반경 × rubbleRange 안에서 처음 연결 면적의 이 비율도 안 남은 조각은 완전히 떼어낸다
