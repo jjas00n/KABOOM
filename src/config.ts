@@ -417,6 +417,39 @@ export const DAMAGE_VISUAL = {
   maxRenderError: 0.01, // 불변 조건: 렌더 ↔ 콜라이더 오차 (m)
 } as const;
 
+/** 경제: 파편 = 돈 (src/economy/, Phase 7-1) */
+export const ECONOMY = {
+  // 재질 단가 ($/kg). 부재 종류(kind)가 우선, 없으면 재질로. 0이면 수익 없음 + 파괴율 계산에서도 빠진다
+  pricePerKg: {
+    concrete: 0.004,
+    glass: 0.08, // 얇아서 가볍지만 비싸다
+  } as Record<string, number>,
+  kindPricePerKg: {
+    foundation: 0, // 기초는 돈도 파괴율도 아님
+  } as Record<string, number>,
+  minValue: 1, // 아무리 작은 조각도 최소 이만큼 ($, 단가 0인 조각 제외)
+  orderMultiplier: 1, // 주문 배율 (7-3 주문이 정한다)
+  // 희귀 파편 (훅만, 기본 꺼짐). 건물 seed로 결정 → 같은 건물이면 같은 조각이 희귀
+  rareEnabled: false,
+  rareChance: 0.004,
+  rareMultiplier: 15,
+  rareSalt: 0x9e3779b9, // 건물 seed와 섞는 값
+  rareColor: { r: 1.35, g: 1.05, b: 0.35 }, // 금빛 바탕색 (조각 색에 곱한다)
+  completionThreshold: 0.85, // 파괴율 바의 임계값 표시 (7-2 완파 피날레)
+  // +$ 팝업 (fx/MoneyPopups.ts)
+  popupBinSec: 0.2, // 이 시간 동안 같은 화면 셀의 수익을 묶어 하나로
+  popupCellPx: 140, // 화면 공간 셀 크기
+  popupWorldCellM: 1.5, // 지급을 먼저 이 크기 월드 격자로 모아 프레임당 셀마다 한 번만 화면 투영
+  popupMax: 24, // 동시에 떠 있는 최대 수 (풀)
+  popupLifeSec: 1.3,
+  popupRisePx: 70,
+  popupBigAmount: 500, // 이 이상이면 크게 강조
+  popupMaxScale: 2.6,
+  // HUD 돈 카운터가 굴러가는 속도
+  counterSmoothingSec: 0.35, // 지수 스무딩 시간상수
+  counterMinSpeed: 30, // $/s: 작은 차이도 이 속도 이상으로 따라간다
+} as const;
+
 /** 포인트 라이트 풀 (fx/LightPool.ts): 개수가 바뀌면 모든 재질 셰이더가 다시 컴파일되므로 고정 */
 export const LIGHT_POOL = {
   size: 5,

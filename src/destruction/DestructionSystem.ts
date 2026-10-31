@@ -76,6 +76,11 @@ export class DestructionSystem {
   onGroundImpact: ((body: PhysicsBody, speed: number) => void) | null = null;
   /** 유리 조각이 처음으로 떨어져 나감 (조각 원래 자리) — 이펙트용 */
   onGlassBroken: ((position: Vec3Like) => void) | null = null;
+  /**
+   * 조각들이 dynamic으로 전환됨 (구조에서 분리, 굳은 잔해가 다시 깨어난 경우도 포함).
+   * 경제(파편 수익)가 구독한다 — 같은 조각이 여러 번 올 수 있으니 받는 쪽이 중복을 거른다.
+   */
+  onReleased: ((frags: readonly number[]) => void) | null = null;
   private readonly glassBroken: Uint8Array;
   /** 조각 손상도·손상 자세·느슨 판정 */
   readonly damage: DamageModel;
@@ -299,6 +304,7 @@ export class DestructionSystem {
     // 움직이는 잔해는 발사체와 부딪히지 않는다 (굳으면 onFrozen에서 되돌린다)
     for (const c of chunk.body.colliders) c.setCollisionGroups(DEBRIS_GROUPS);
     for (const i of chunk.frags) this.everDynamic[i] = 1;
+    this.onReleased?.(chunk.frags);
     this.frozen.delete(chunk);
     if (chunk.frags.length > 1) this.compounds.add(chunk);
     this.debris.add(chunk.body, chunk.volume);

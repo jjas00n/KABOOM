@@ -94,6 +94,8 @@ export class BuildingSite {
   footprint: Aabb | null = null;
   /** 난간 꼭대기 높이 */
   height = 0;
+  /** 조각별 부재 종류 (foundation, wallPanel, …). 생성 전 빈 배열 */
+  private kinds: string[] = [];
 
   private readonly materials: FragmentMaterials;
   private builtQuality: QualityPreset | null = null;
@@ -158,6 +160,11 @@ export class BuildingSite {
   /** 조각 색을 지금 설정(디버그 색칠 여부)대로 다시 칠한다 */
   restoreColors(): void {
     this.system?.fragments.meshes.setDebugColors(this.debugColors, BUILDING_DEMO.debugColorSeed);
+  }
+
+  /** 조각 i의 부재 종류 */
+  kindOf(i: number): string {
+    return this.kinds[i] ?? '';
   }
 
   /** 건물 화재 (생성 중이면 null) */
@@ -371,6 +378,7 @@ export class BuildingSite {
     if (generation !== this.generation) return false;
 
     const member = (i: number) => members[frags[i]!.member]!;
+    this.kinds = frags.map((f) => members[f.member]!.kind);
     const d = new DestructionSystem(
       this.scene,
       this.physics,

@@ -329,6 +329,8 @@ export class FragmentMeshes {
   readonly slots: BatchSlot[][];
   /** 조각별 기본색 RGBA (그을음·불씨). 디버그 색칠·엑스레이가 끝나면 이 색으로 돌아간다 */
   readonly tint: Float32Array;
+  /** 조각별 바탕색 RGB (희귀 파편 금빛 등). tint에 곱해져 칠해진다 */
+  readonly base: Float32Array;
   /** 디버그 색칠 등 다른 색이 덮고 있으면 true: setTint는 저장만 하고 칠하지 않는다 */
   overlay = false;
   /** 배치별 손상 텍스처 (외벽·단면만, 유리는 없음) */
@@ -355,6 +357,7 @@ export class FragmentMeshes {
 
     this.slots = frags.map(() => []);
     this.tint = new Float32Array(frags.length * 4).fill(1);
+    this.base = new Float32Array(frags.length * 3).fill(1);
     const matrix = new Matrix4();
     for (const [parts, material] of [
       [exterior, materials.exterior],
@@ -407,21 +410,34 @@ export class FragmentMeshes {
     }
   }
 
-  /** 조각 i의 기본색. overlay 중이면 저장만 */
+  /** 조각 i의 기본색 (그을음·불씨). overlay 중이면 저장만 */
   setTint(i: number, r: number, g: number, b: number, a: number): void {
     this.tint.set([r, g, b, a], i * 4);
-    if (this.overlay) return;
-    rgba.set(r, g, b, a);
-    for (const { batch, id } of this.slots[i]!) batch.setColorAt(id, rgba);
+    if (!this.overlay) this.paint(i);
+  }
+
+  /** 조각 i의 바탕색 (희귀 파편 금빛 등). overlay 중이면 저장만 */
+  setBaseColor(i: number, r: number, g: number, b: number): void {
+    this.base.set([r, g, b], i * 3);
+    if (!this.overlay) this.paint(i);
   }
 
   /** 모든 조각을 기본색으로 다시 칠한다 */
   restoreTints(): void {
+    for (let i = 0; i < this.slots.length; i++) this.paint(i);
+  }
+
+  /** 인스턴스 색 = 바탕색 × tint (알파는 tint 그대로: 불씨) */
+  private paint(i: number): void {
     const t = this.tint;
-    this.slots.forEach((slots, i) => {
-      rgba.set(t[i * 4]!, t[i * 4 + 1]!, t[i * 4 + 2]!, t[i * 4 + 3]!);
-      for (const { batch, id } of slots) batch.setColorAt(id, rgba);
-    });
+    const c = this.base;
+    rgba.set(
+      t[i * 4]! * c[i * 3]!,
+      t[i * 4 + 1]! * c[i * 3 + 1]!,
+      t[i * 4 + 2]! * c[i * 3 + 2]!,
+      t[i * 4 + 3]!,
+    );
+    for (const { batch, id } of this.slots[i]!) batch.setColorAt(id, rgba);
   }
 
   /** 조각 i의 손상 외관 값 (damage 0~1, 매달림 0~1, 흔들림 위상 0~1). flushDamage 전까지 GPU에 안 올라간다 */

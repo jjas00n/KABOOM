@@ -61,6 +61,16 @@ function createGame(
       folder.add(game, 'state').name('State').disable().listen();
       folder.add(game.powers, 'cannon', 0, 1, 0.01).name('Cannon power').listen();
       folder.add(game.powers, 'wizard', 0, 1, 0.01).name('Wizard power').listen();
+      const eco = gui.addFolder('Economy');
+      eco.add(game.economy.wallet, 'money').name('Money $').decimals(0).disable().listen();
+      eco
+        .add(game.economy, 'destructionRate', 0, 1)
+        .name('Destroyed')
+        .decimals(3)
+        .disable()
+        .listen();
+      eco.add(game.economy, 'rareEnabled').name('Rare fragments (next building)').listen();
+      eco.add(game.economyStats, 'ms').name('Economy ms / frame').decimals(3).disable().listen();
       addBuildingGui(gui, game.site, () => game.reset());
       addFireGui(gui, game.site);
       addVisualsGui(gui, renderer.postfx, game.site);

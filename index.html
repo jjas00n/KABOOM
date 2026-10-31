@@ -137,6 +137,93 @@
         background: #e0622c;
         color: #fff;
       }
+      .eco-hud {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        min-width: 220px;
+        padding: 10px 14px 12px;
+        border-radius: 10px;
+        background: rgb(20 20 24 / 0.72);
+        color: #f2f2f2;
+        font:
+          600 13px/1.4 system-ui,
+          sans-serif;
+        pointer-events: none;
+      }
+      .eco-money {
+        font-size: 28px;
+        font-weight: 800;
+        color: #ffd25a;
+        font-variant-numeric: tabular-nums;
+        transition: transform 0.15s;
+      }
+      .eco-money.rolling {
+        transform: scale(1.06);
+      }
+      .eco-building {
+        opacity: 0.8;
+        font-variant-numeric: tabular-nums;
+      }
+      .eco-bar {
+        position: relative;
+        height: 8px;
+        margin-top: 8px;
+        border-radius: 4px;
+        background: rgb(255 255 255 / 0.15);
+      }
+      .eco-bar-fill {
+        height: 100%;
+        width: 0;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #8a8f99, #e0622c);
+        transition: width 0.2s;
+      }
+      .eco-bar-fill.done {
+        background: linear-gradient(90deg, #e0622c, #ffd25a);
+      }
+      .eco-bar-mark {
+        position: absolute;
+        top: -3px;
+        width: 2px;
+        height: 14px;
+        background: #fff;
+      }
+      .eco-bar-label {
+        margin-top: 4px;
+        font-size: 12px;
+        opacity: 0.8;
+      }
+      .money-popups {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        overflow: hidden;
+      }
+      .money-popup {
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: #ffe9a8;
+        font:
+          800 18px/1 system-ui,
+          sans-serif;
+        text-shadow: 0 2px 6px rgb(0 0 0 / 0.7);
+        white-space: nowrap;
+        will-change: transform, opacity;
+      }
+      .money-popup.big {
+        color: #ffcf3a;
+        text-shadow:
+          0 0 12px rgb(255 190 40 / 0.8),
+          0 2px 6px rgb(0 0 0 / 0.8);
+      }
+      .money-popup.rare {
+        color: #fff6c8;
+        text-shadow:
+          0 0 16px rgb(255 230 120 / 1),
+          0 0 4px rgb(255 255 255 / 1);
+      }
       .graph-legend {
         position: fixed;
         left: 16px;

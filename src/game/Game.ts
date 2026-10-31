@@ -19,6 +19,7 @@ import {
   CAMERA,
   CANNON,
   DAMAGE_VISUAL,
+  ECONOMY,
   FIRE,
   FIREBALL,
   HIT_STOP,
@@ -32,6 +33,10 @@ import { FireballVisual } from '../fx/FireballVisual';
 import type { PostFX } from '../fx/PostFX';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import { Stage } from '../sandbox/Stage';
+import { Economy } from '../economy/Economy';
+import { MATERIAL } from '../fracture/Fragment';
+import { MoneyPopups } from '../fx/MoneyPopups';
+import { EconomyHud } from '../ui/EconomyHud';
 import { HUD } from '../ui/HUD';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
 import { muzzleSpeed } from './ballistics';
@@ -104,6 +109,12 @@ export class Game {
   private readonly flightVelocity = new Vector3();
 
   private readonly fireballVisual: FireballVisual;
+  /** 파편 = 돈: 지갑·배율·건물 장부 (건물이 바뀌어도 지갑은 유지) */
+  readonly economy = new Economy();
+  /** 성능 측정: 이번 프레임 경제(지급 + 팝업)에 쓴 시간 (ms) */
+  readonly economyStats = { ms: 0 };
+  private readonly popups: MoneyPopups;
+  private readonly ecoHud: EconomyHud;
   /** 파이어볼을 따라다니는 라이트 (풀에서 빌림) */
   private fireballLight: PointLight | null = null;
   /** 충전 남은 시간 (s). 음수면 충전 중 아님 */
@@ -153,6 +164,9 @@ export class Game {
     this.orbitCam = new SpectateCam(this.orbit);
     this.aimCam = new AimCam(cannon);
     this.killCam = new XRayKillCam(scene, this.rig, time, this.projectiles.cannon, this.postfx);
+    this.popups = new MoneyPopups(camera);
+    this.ecoHud = new EconomyHud();
+    this.economy.onPayout = (x, y, z, amount, rare) => this.popups.add(x, y, z, amount, rare);
     this.hud = new HUD(
       (id) => this.requestLauncher(id),
       () => this.requestIdle(),
@@ -234,6 +248,10 @@ export class Game {
     this.launchers.wizard.update(dt);
     this.updateFireball(dt);
     this.site.update(dt);
+    this.economy.update(dt * this.time.timeScale); // 파괴율은 물리 시간 기준 갱신 주기
+    this.popups.update(dt);
+    this.ecoHud.update(dt, this.economy);
+    this.economyStats.ms = this.economy.consumeCostMs() + this.popups.lastMs;
     this.stage.update(dt, this.site.bounds);
     this.rig.update(dt);
   }
@@ -528,6 +546,8 @@ export class Game {
     this.ready = false;
     this.hideLaunchers();
     this.hud.setState(this.fsm.state, this.ready);
+    this.economy.detach();
+    this.popups.clear();
     void this.site.reset().then((ok) => {
       if (!ok) return;
       const { footprint, height } = this.site;
@@ -539,10 +559,31 @@ export class Game {
         );
       }
       this.site.destruction!.onCollisionStarted = (a, b) => this.onCollision(a, b);
+      this.attachEconomy();
       this.ready = true;
       if (this.fsm.is(GameState.IDLE)) this.enterIdle(); // 새 건물 중심으로
       this.hud.setState(this.fsm.state, this.ready);
     });
+  }
+
+  /** 새 건물의 장부를 연다. 희귀 파편(켜져 있으면)은 금빛으로 */
+  private attachEconomy(): void {
+    const d = this.site.destruction!;
+    const frags = d.fragments.fragments;
+    const ledger = this.economy.attach(
+      d,
+      {
+        count: d.graph.nodeCount,
+        mass: d.graph.mass,
+        kind: (i) => this.site.kindOf(i),
+        material: (i) => (frags[i]!.material === MATERIAL.glass ? 'glass' : 'concrete'),
+      },
+      this.site.settings.seed,
+    );
+    const gold = ECONOMY.rareColor;
+    for (let i = 0; i < ledger.rare.length; i++) {
+      if (ledger.rare[i]) d.fragments.meshes.setBaseColor(i, gold.r, gold.g, gold.b);
+    }
   }
 
   // ── 조준 ───────────────────────────────────────────────

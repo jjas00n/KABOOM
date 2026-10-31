@@ -58,6 +58,15 @@ SPECTATE ─[뒤로]→ IDLE (건물 유지),  SPECTATE ─[리셋]→ IDLE (건
   - 균열·열화·흔들림은 배치별 DataTexture → 셰이더. 재질·드로우콜은 늘리지 않는다.
 - 너무 약해진 조각은 스텝당 상한까지 떨어뜨린다.
 - 손상된 곳을 맞히면 더 넓게 떨어져 나가고, 관통 저항이 낮아 더 깊이 파인다.
+
+## 경제 (Phase 7, 파편 = 돈)
+- `src/economy/`는 물리·렌더를 import하지 않는 순수 로직이다. `DestructionSystem.onReleased`(조각이 dynamic으로 전환) 이벤트만 구독한다.
+- 조각 가치 = max(질량 × 단가, 최소 가치) × `Modifiers.total` × 희귀 배수.
+  - 기초는 단가 0이라 수익도 파괴율도 아니다.
+  - 장부(`BuildingLedger`)가 조각마다 한 번만 지급한다.
+- 모든 배율은 `Modifiers` 한 곳에서 합성한다: (1 + 가산 합) × 곱셈 배율 곱. Phase 10 업그레이드가 여기에 붙는다.
+- 파괴율 = 분리된 질량 / 기초 제외 전체 질량. CollapseSolver 주기에만 갱신한다.
+- 수익 출처는 fragments / finale / bonus로 나뉜다 (`Wallet`).
 - 컷신 카메라는 `CatmullRomCurve3` + easing. 스킵(클릭/Space) 가능.
 - AIMING: 대포 포신 뒤 3인칭 or 포신 안 1인칭, 마우스로 yaw/pitch(제한 각도), 휠/키로 파워, 예상 궤적 점선(선택).
 - PROJECTILE_CAM: 발사체 뒤를 따라가는 체이스 캠(약간의 지연/스무딩).
@@ -74,11 +83,13 @@ src/
   destruction/ Explosion.ts(임펄스·BlastShape), CollapseSolver.ts(지지 BFS), DebrisManager.ts(정리/수명),
                FireSystem.ts(화재 확산·연소·약화, 순수 로직), DamageModel.ts(조각 손상도·자세·느슨 판정),
                DamageView.ts(손상 자세·텍스처 적용), Invariants.ts(불변 조건)
+  economy/     Wallet.ts, Modifiers.ts, FragmentValue.ts, BuildingLedger.ts, Economy.ts (순수 로직)
   game/        StateMachine.ts, Launcher.ts(발사대 인터페이스), Cannon.ts, Wizard.ts, fireball.ts,
                Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결)
   camera/      CutsceneCam.ts, AimCam.ts, ChaseCam.ts, SpectateCam.ts, CameraShake.ts
-  fx/          Dust.ts, Sparks.ts, Fire.ts(불꽃·연기·불씨), FireballVisual.ts, LightPool.ts(고정 개수), Rebar.ts, PostFX.ts
-  ui/          HUD(대포 버튼, 파워 게이지, 리셋, 품질 선택), 디버그 GUI
+  fx/          Dust.ts, Sparks.ts, Fire.ts(불꽃·연기·불씨), FireballVisual.ts, LightPool.ts(고정 개수), Rebar.ts,
+               MoneyPopups.ts(+$ 묶음 팝업), PostFX.ts
+  ui/          HUD(대포 버튼, 파워 게이지, 리셋, 품질 선택), EconomyHud(돈·이번 건물 수익·파괴율 바), 디버그 GUI
   audio/       AudioManager.ts
 tests/         vitest 단위 테스트
 ```
