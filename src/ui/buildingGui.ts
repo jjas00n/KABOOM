@@ -60,6 +60,15 @@ function addDamageGui(gui: GUI, site: BuildingSite): void {
     .name('Damage heat map')
     .onChange((v: boolean) => site.setDamageHeatmap(v));
   folder
+    .add(site, 'durabilityHeatmap')
+    .name('Durability heat map')
+    .onChange((v: boolean) => site.setDurabilityHeatmap(v));
+  folder
+    .add(site, 'durabilityEnabled')
+    .name('Durability')
+    .onChange((v: boolean) => site.setDurabilityEnabled(v));
+  folder.add(site.destructionStats, 'durabilityHits').name('Hits held').disable().listen();
+  folder
     .add(site, 'showColliders')
     .name('Collider overlay')
     .onChange((v: boolean) => site.setShowColliders(v));

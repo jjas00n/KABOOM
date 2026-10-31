@@ -417,6 +417,45 @@ export const DAMAGE_VISUAL = {
   maxRenderError: 0.01, // 불변 조건: 렌더 ↔ 콜라이더 오차 (m)
 } as const;
 
+/**
+ * 조각 내구도 (destruction/Durability.ts, 6++): 직접 타격(폭발·충돌·착지)에 버티는 '체력'.
+ * 1 이상이면 맞아도 바로 떨어지지 않고 내구도만 깎인다. 0이 된 뒤 다음 타격에 분리된다.
+ * 지지 상실·과부하·느슨 낙하는 내구도와 무관하다 (공중에 뜬 블록 없음).
+ */
+export const DURABILITY = {
+  enabled: true,
+  // 부재별 기본 내구도. 없는 종류는 0. core = 코어/계단실 벽 자리 (아직 생성기에 없음)
+  byKind: {
+    wallPanel: 0,
+    glass: 0,
+    parapet: 0,
+    slab: 1,
+    beam: 1,
+    column: 2,
+    core: 3,
+  } as Record<string, number>,
+  jitterUp: 0.25, // 조각마다 이 확률로 +1 (기본값 1 이상인 부재만)
+  jitterDown: 0.15, // 이 확률로 -1 (0 아래로는 안 내려간다)
+  seedSalt: 0x2545f491, // 건물 seed와 섞어 결정적 지터
+  // 폭발: 조각 위치 에너지 = 폭발 에너지 × (1 - 거리/반경)². 감소량 = ceil(에너지 / energyPerPoint), 최소 1
+  energyPerPoint: 8e5, // J (가장 약한 대포 4e5J 정면 = 1, 최대 파워 접촉 2MJ = 3)
+  minHitEnergy: 3e4, // J: 이보다 약하면 버티기만 하고 깎이지 않는다
+  // 충돌 연쇄 (떨어지는 덩어리가 부딪힘): 운동에너지 기준
+  chainEnergyPerPoint: 2e4, // J
+  chainMinHitEnergy: 4e3, // J
+  fireTickSec: 6, // 타는 조각은 이 간격마다 1 감소
+  valuePerPoint: 0.5, // 경제: 조각 가치 × (1 + 이 값 × 최대 내구도)
+  // 외관
+  toneDarkPerPoint: 0.07, // 바탕색을 최대 내구도 1당 이만큼 짙게 (단단해 보이게)
+  crackAtZero: 0.9, // 내구도가 0까지 깎인 조각의 균열 세기 (damage R 채널 하한)
+  nudgeMax: 0.03, // m: 깎일 때마다 살짝 밀림 (손실 비율 × 이 값, 콜라이더도 같이)
+  nudgeAngle: 0.03, // rad
+  flashSec: 0.3, // 맞은 순간 밝아지는 시간
+  flashBrightness: 1.6, // emissive 배수 (HDR)
+  chipsPerHit: 6, // 표면 칩 (시각 전용 부스러기)
+  maxHitEffectsPerBlast: 12, // 한 폭발에서 이펙트를 내는 조각 상한
+} as const;
+
 /** 경제: 파편 = 돈 (src/economy/, Phase 7-1) */
 export const ECONOMY = {
   // 재질 단가 ($/kg). 부재 종류(kind)가 우선, 없으면 재질로. 0이면 수익 없음 + 파괴율 계산에서도 빠진다

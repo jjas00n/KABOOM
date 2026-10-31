@@ -12,6 +12,7 @@ import {
   BUILDING_DEMO,
   DAMAGE_VISUAL,
   DEBRIS,
+  DURABILITY,
   DEFAULT_QUALITY,
   FIRE,
   FIREBALL,
@@ -23,6 +24,7 @@ import {
 import type { Assets } from '../core/Assets';
 import { DamageView } from '../destruction/DamageView';
 import { DestructionSystem, type DestructionStats } from '../destruction/DestructionSystem';
+import { Durability } from '../destruction/Durability';
 import { checkInvariants, violationCount } from '../destruction/Invariants';
 import { StructureDebug } from '../destruction/StructureDebug';
 import { fractureInWorker } from '../fracture/FractureJob';
@@ -52,6 +54,8 @@ const HEATMAP_SEC = 0.25;
 const HEAT_LOW = new Color(0x30c060);
 const HEAT_HIGH = new Color(0xff2020);
 const heat = new Color();
+/** 내구도 히트맵에서 빨강이 되는 내구도 */
+const DURABILITY_HEAT_MAX = 4;
 
 export class BuildingSite {
   readonly settings: BuildingParams & { quality: QualityPreset } = {
@@ -64,6 +68,7 @@ export class BuildingSite {
     islands: 0,
     shatters: 0,
     chainBreaks: 0,
+    durabilityHits: 0,
     looseDrops: 0,
     overloaded: 0,
     compounds: 0,
@@ -90,6 +95,10 @@ export class BuildingSite {
   damageEffects: boolean = DAMAGE_VISUAL.enabled;
   showColliders = false;
   damageHeatmap = false;
+  /** 디버그: 조각 색을 남은 내구도로 (0 초록 → 높음 빨강) */
+  durabilityHeatmap = false;
+  /** 내구도 켬/끔 (비교·측정용, 지금 건물에 바로 적용) */
+  durabilityEnabled: boolean = DURABILITY.enabled;
   /** 기둥 바깥면까지의 외곽 (생성 전 null) */
   footprint: Aabb | null = null;
   /** 난간 꼭대기 높이 */
@@ -235,14 +244,18 @@ export class BuildingSite {
         });
       }
     }
-    if (this.damageHeatmap) {
+    if (this.damageHeatmap || this.durabilityHeatmap) {
       this.heatmapAcc += dt;
       if (this.heatmapAcc >= HEATMAP_SEC) {
         this.heatmapAcc = 0;
         const meshes = d.fragments.meshes;
+        const cur = d.durability.current;
         meshes.overlay = true;
         meshes.slots.forEach((slots, i) => {
-          heat.lerpColors(HEAT_LOW, HEAT_HIGH, d.damage.damage[i]!);
+          const t = this.durabilityHeatmap
+            ? Math.min(1, cur[i]! / DURABILITY_HEAT_MAX)
+            : d.damage.damage[i]!;
+          heat.lerpColors(HEAT_LOW, HEAT_HIGH, t);
           for (const { batch, id } of slots) batch.setColorAt(id, heat);
         });
       }
@@ -266,7 +279,25 @@ export class BuildingSite {
   setDamageHeatmap(enabled: boolean): void {
     this.damageHeatmap = enabled;
     this.heatmapAcc = Infinity;
-    if (!enabled) this.restoreColors();
+    if (!enabled && !this.durabilityHeatmap) this.restoreColors();
+  }
+
+  /** 디버그: 조각 색을 남은 내구도로 */
+  setDurabilityHeatmap(enabled: boolean): void {
+    this.durabilityHeatmap = enabled;
+    this.heatmapAcc = Infinity;
+    if (!enabled && !this.damageHeatmap) this.restoreColors();
+  }
+
+  /** 내구도 켬/끔: 끄면 모든 조각이 내구도 0처럼 바로 깨진다 */
+  setDurabilityEnabled(enabled: boolean): void {
+    this.durabilityEnabled = enabled;
+    if (this.system) this.system.durability.enabled = enabled;
+  }
+
+  /** 조각별 최대 내구도 (건물 생성 전 빈 배열) */
+  maxDurabilityOf(i: number): number {
+    return this.system?.durability.max[i] ?? 0;
   }
 
   /** 지정 지점에 에너지(J)만큼 폭발. 반환: 파괴 반경 (건물이 없으면 0) */
@@ -387,8 +418,23 @@ export class BuildingSite {
       (i) => ({ anchor: member(i).anchor, cladding: CLADDING.includes(member(i).kind) }),
       volumePercentile(frags, DEBRIS.simpleColliderPercentile),
       true, // 손상 반응 (느슨한 조각 낙하, 손상 부위 증폭)
+      Durability.initial(
+        frags.length,
+        (i) => member(i).kind,
+        (i) => member(i).anchor,
+        params.seed,
+        params.durabilityBonus,
+      ),
     );
     this.system = d;
+    d.durability.enabled = this.durabilityEnabled;
+    // 단단한 조각은 처음부터 짙은 콘크리트 톤: 여기는 버티겠다는 게 보이게
+    for (let i = 0; i < frags.length; i++) {
+      const m = d.durability.max[i]!;
+      if (m === 0) continue;
+      const tone = Math.max(0.5, 1 - DURABILITY.toneDarkPerPoint * m);
+      d.fragments.meshes.setBaseColor(i, tone, tone, tone);
+    }
     d.ground = this.ground;
     d.onGroundImpact = (body, speed) =>
       this.effects.groundImpact(body.currPos, speed, body.rigidBody.mass());
@@ -403,6 +449,14 @@ export class BuildingSite {
     this.burning.heatmap = this.heatmap;
     this.burning.system.spreadMultiplier = this.spreadMultiplier;
     this.damageView = new DamageView(d, this.physics, this.materials);
+    const view = this.damageView;
+    d.onDurabilityHit = (i, _lost, effect) => {
+      view.onHit(i);
+      if (effect) {
+        const p = d.positions;
+        this.effects.durabilityHit({ x: p[i * 3]!, y: p[i * 3 + 1]!, z: p[i * 3 + 2]! });
+      }
+    };
     if (!this.damageEffects) this.damageView.setEnabled(false);
     this.rebarRevision = -1;
     this.graphDebug = new StructureDebug(this.scene, d.graph, d.positions);

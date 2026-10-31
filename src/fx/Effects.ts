@@ -1,7 +1,7 @@
 // 파괴 이펙트 묶음: 먼지(Dust) + 부스러기·섬광(Sparks) + 불(Fire).
 // 파티클 시계는 물리 시간(실제 시간 × timeScale)이라 hit-stop·킬캠 슬로모션에서 같이 느려진다.
 import type { Scene } from 'three';
-import { DUST, type QualityPreset } from '../config';
+import { DURABILITY, DUST, type QualityPreset } from '../config';
 import type { Vec3Like } from '../fracture/polyhedron';
 import { Dust } from './Dust';
 import { Fire } from './Fire';
@@ -45,6 +45,12 @@ export class Effects {
     this.groundEmits++;
     this.dust.groundImpact(point, mass);
     this.sparks.groundImpact(point);
+  }
+
+  /** 조각이 내구도로 버팀: 칩 + 작은 돌가루 */
+  durabilityHit(point: Vec3Like): void {
+    this.sparks.chips(point, DURABILITY.chipsPerHit);
+    this.dust.puff(point, DUST.groundSize * 0.7);
   }
 
   glassBroken(point: Vec3Like): void {

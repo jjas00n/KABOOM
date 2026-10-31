@@ -1,6 +1,7 @@
 // 건물 한 채의 장부: 조각별 바탕 가치, 지급 여부, 파괴율. 순수 로직 (물리·렌더 모름).
 //   - 조각마다 한 번만 지급한다 (paid). 같은 조각이 다시 깨어나 dynamic이 돼도 0
 //   - 파괴율 = 분리된(지급된) 질량 / 가치 있는 조각의 전체 질량 (기초 등 단가 0인 조각은 분모에서도 빠진다)
+import { DURABILITY } from '../config';
 import { fragmentValue, rollRare, unitPrice } from './FragmentValue';
 
 export interface LedgerNodes {
@@ -11,6 +12,8 @@ export interface LedgerNodes {
   kind: (i: number) => string;
   /** 재질 (concrete, glass) */
   material: (i: number) => string;
+  /** 최대 내구도 (없으면 0): 가치 × (1 + valuePerPoint × 최대 내구도) */
+  durability?: (i: number) => number;
 }
 
 export interface Payout {
@@ -52,13 +55,9 @@ export class BuildingLedger {
     this.rare = rollRare(n, seed, (i) => this.counted[i] === 1, rareEnabled);
     this.baseValue = new Float64Array(n);
     for (let i = 0; i < n; i++) {
-      this.baseValue[i] = fragmentValue(
-        this.mass[i]!,
-        nodes.kind(i),
-        nodes.material(i),
-        1,
-        this.rare[i] === 1,
-      );
+      this.baseValue[i] =
+        fragmentValue(this.mass[i]!, nodes.kind(i), nodes.material(i), 1, this.rare[i] === 1) *
+        (1 + DURABILITY.valuePerPoint * (nodes.durability?.(i) ?? 0));
     }
   }
 

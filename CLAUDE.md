@@ -31,6 +31,12 @@
 4. **구조 무결성 그래프**: 조각들을 인접(면 공유) 관계로 연결한 그래프. 지면에 고정된 조각에서 BFS로 도달 불가능한 조각 = 지지 상실 → 동적(dynamic) 전환 → **연쇄 붕괴**.
 5. 피격 전 조각은 물리적으로 `fixed`(또는 sleeping) 상태라 비용이 거의 없다. 활성화된 조각만 시뮬레이션.
 6. 품질 프리셋 Low/Medium/High (조각 수 대략 1.5k / 4k / 8k). 기본 Medium.
+7. **조각 내구도**(`destruction/Durability.ts`): 조각마다 정수 내구도 (부재별 기본값: 기둥 2, 보·슬래브 1, 외벽·유리 0 + seed 지터).
+   - 직접 타격(폭발·충돌 연쇄·착지 분해)에는 버티며 내구도만 깎인다. 0이 된 뒤 다음 타격에 분리된다.
+   - **지지 상실·과부하·느슨 낙하는 내구도를 무시한다** (공중에 뜬 블록 없음).
+   - 구조(엣지 용량·하중)와 역할이 다르다: 엣지 = 무엇이 무엇을 받치나, 내구도 = 조각 하나의 체력.
+   - 외관은 damage와 합친다: 균열 = max(damage, 내구도 손실), 피격 번쩍임, 살짝 밀림 (콜라이더도 같이).
+   - 단단한 조각은 처음부터 짙은 톤이다. 피날레(7-2)는 `ignoreDurability`로 무시한다.
 
 ## 게임 흐름 (상태 머신)
 ```
@@ -82,7 +88,7 @@ src/
   building/    BuildingGenerator.ts, members(Column/Slab/WallPanel/Window), StructureGraph.ts
   destruction/ Explosion.ts(임펄스·BlastShape), CollapseSolver.ts(지지 BFS), DebrisManager.ts(정리/수명),
                FireSystem.ts(화재 확산·연소·약화, 순수 로직), DamageModel.ts(조각 손상도·자세·느슨 판정),
-               DamageView.ts(손상 자세·텍스처 적용), Invariants.ts(불변 조건)
+               DamageView.ts(손상 자세·텍스처 적용), Invariants.ts(불변 조건), Durability.ts(조각 내구도)
   economy/     Wallet.ts, Modifiers.ts, FragmentValue.ts, BuildingLedger.ts, Economy.ts (순수 로직)
   game/        StateMachine.ts, Launcher.ts(발사대 인터페이스), Cannon.ts, Wizard.ts, fireball.ts,
                Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결)

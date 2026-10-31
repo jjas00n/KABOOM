@@ -9,6 +9,7 @@ import { DEFAULT_BUILDING, generateBuilding } from '../src/building/BuildingGene
 import { memberSeeds, seedCountsForPreset } from '../src/building/seedBudget';
 import { FIREBALL, PHYSICS, STRUCTURE } from '../src/config';
 import { DestructionSystem } from '../src/destruction/DestructionSystem';
+import { Durability } from '../src/destruction/Durability';
 import { FireSystem } from '../src/destruction/FireSystem';
 import { Economy } from '../src/economy/Economy';
 import { MATERIAL } from '../src/fracture/Fragment';
@@ -51,6 +52,12 @@ async function site() {
     (i) => ({ anchor: member(i).anchor, cladding: CLADDING.includes(member(i).kind) }),
     0,
     true,
+    Durability.initial(
+      frags.length,
+      (i) => member(i).kind,
+      (i) => member(i).anchor,
+      1,
+    ),
   );
   system.ground = ground;
   const economy = new Economy();
@@ -191,7 +198,10 @@ describe('sturdiness (chain collapse and loose drops stay moderate)', () => {
 
 /** 튜닝 후 상한 (PERF.md 튜닝 절 측정값보다 여유를 둔다) */
 const STURDY = {
-  cannonTenShots: 0.35, // 튜닝 후 0.247 (전 0.494)
-  fireballThirtySec: 0.1, // 튜닝 후 0.004 (전 0.80)
-  fireBoost: 2, // 튜닝 후 불탄 건물 0.62 vs 새 건물 0.18 (3.5배)
+  // 측정: 튜닝 전 0.494 → 연쇄 완화 0.247 → 뒤늦은 붕괴 수정 0.200 → 내구도(6++) 0.037
+  cannonTenShots: 0.1,
+  // 측정: 튜닝 전 0.80 → 0.004 → 내구도 0.002
+  fireballThirtySec: 0.1,
+  // 측정: 불탄 0.40 vs 새 0.15 → 내구도 불탄 0.27 vs 새 0.019 (화재가 내구도를 깎는다)
+  fireBoost: 2,
 };

@@ -6,9 +6,11 @@
 //             → 떨어지는 덩어리 충격 감지 → 약한 내부 엣지부터 끊어 분해 → 잔해 정리
 //             → (damage 켬) 손상도 갱신 → 너무 약해진 조각을 스텝당 상한까지 떨어뜨린다
 // damage를 켜면 이미 손상된 곳은 폭발·잔해 충돌에 더 쉽게 떨어져 나간다 (DamageModel).
+// 내구도(Durability): 직접 타격(폭발·충돌 연쇄·착지 분해)에는 버티며 내구도만 깎인다.
+//   지지 상실·과부하·느슨 낙하는 내구도를 무시한다 (받침이 없으면 떨어진다).
 import { Vector3, type Scene } from 'three';
 import { StructureGraph, type NodeInfo } from '../building/StructureGraph';
-import { DAMAGE_VISUAL, DEBRIS, EXPLOSION, STRUCTURE } from '../config';
+import { DAMAGE_VISUAL, DEBRIS, DURABILITY, EXPLOSION, STRUCTURE } from '../config';
 import { MATERIAL, type Fragment } from '../fracture/Fragment';
 import type { FragmentMaterials } from '../fracture/FragmentMeshes';
 import type { Vec3Like } from '../fracture/polyhedron';
@@ -16,6 +18,7 @@ import { DEBRIS_GROUPS, DEFAULT_GROUPS } from '../physics/collisionGroups';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import { CollapseSolver, type CollapseEvents } from './CollapseSolver';
 import { DamageModel } from './DamageModel';
+import { Durability } from './Durability';
 import { DebrisManager } from './DebrisManager';
 import { applyExplosion, blastRadius, breakInBlast, type BlastShape } from './Explosion';
 import { FragmentSet, type Chunk } from './FragmentSet';
@@ -24,6 +27,8 @@ export interface DestructionStats {
   islands: number;
   shatters: number;
   chainBreaks: number;
+  /** 내구도로 버틴 타격 수 (누적) */
+  durabilityHits: number;
   /** 너무 약해져 떨어뜨린 조각 수 (누적) */
   looseDrops: number;
   overloaded: number;
@@ -52,6 +57,7 @@ export class DestructionSystem {
     islands: 0,
     shatters: 0,
     chainBreaks: 0,
+    durabilityHits: 0,
     looseDrops: 0,
     overloaded: 0,
     compounds: 0,
@@ -94,10 +100,18 @@ export class DestructionSystem {
   private damageAcc = 0;
   /** 한 번이라도 dynamic이 된 조각 (불변 조건: 구조에서 떨어진 조각은 반드시 물리로 넘어갔어야 한다) */
   readonly everDynamic: Uint8Array;
+  /** 조각 내구도 */
+  readonly durability: Durability;
+  /**
+   * 조각이 타격을 버티며 내구도가 lost만큼 깎임 (외관·이펙트·칩 팝업용).
+   * effect: 이펙트를 낼지 (폭발당 상한 maxHitEffectsPerBlast)
+   */
+  onDurabilityHit: ((node: number, lost: number, effect: boolean) => void) | null = null;
 
   /**
    * damageResponse: 손상도에 따른 반응 (느슨한 조각 낙하, 손상 부위 폭발·충돌 증폭).
    * 끄면 예전과 완전히 같은 경로 (회귀 테스트).
+   * maxDurability: 조각별 최대 내구도 (없으면 전부 0 = 예전처럼 바로 깨진다).
    */
   constructor(
     scene: Scene,
@@ -107,7 +121,9 @@ export class DestructionSystem {
     nodeInfo: (index: number) => NodeInfo,
     simpleColliderMaxVolume = 0,
     readonly damageResponse = false,
+    maxDurability: Uint8Array | null = null,
   ) {
+    this.durability = new Durability(maxDurability ?? new Uint8Array(frags.length));
     this.graph = StructureGraph.fromFragments(frags, nodeInfo);
     this.solver = new CollapseSolver(this.graph);
     this.queued = new Uint8Array(frags.length);
@@ -165,6 +181,7 @@ export class DestructionSystem {
   /**
    * 폭발: 에너지(J)로 반경을 정해 구조를 끊고 조각을 날린다. 섬 판정은 즉시 한 번 돌린다.
    * profile을 넘기면 그 반경·모양·세기로 (화염 폭발).
+   * ignoreDurability: 내구도를 무시하고 깬다 (7-2 완파 피날레).
    * 반환: 파괴 반경
    */
   detonate(
@@ -172,12 +189,35 @@ export class DestructionSystem {
     energy: number,
     random?: () => number,
     profile?: BlastProfile,
+    ignoreDurability = false,
   ): number {
     const radius = profile ? profile.radius : blastRadius(energy);
-    if (this.damageResponse) this.breakDamaged(center, radius, profile?.coreFraction);
-    for (const i of breakInBlast(this.graph, this.positions, center, radius, profile)) {
+    const round = this.durability.begin();
+    let effects = 0;
+    // 조각 위치 에너지 = 폭발 에너지 × (1 - 거리/반경)² (applyExplosion과 같은 감쇠)
+    const guard = ignoreDurability
+      ? undefined
+      : (i: number, dist: number) => {
+          const falloff = Math.max(0, 1 - dist / radius);
+          const lost = this.durability.hit(
+            i,
+            energy * falloff * falloff,
+            round,
+            DURABILITY.energyPerPoint,
+            DURABILITY.minHitEnergy,
+          );
+          if (lost < 0) return false;
+          if (lost > 0) {
+            const effect = effects++ < DURABILITY.maxHitEffectsPerBlast;
+            this.stats.durabilityHits++;
+            this.onDurabilityHit?.(i, lost, effect);
+          }
+          return true;
+        };
+    for (const i of breakInBlast(this.graph, this.positions, center, radius, profile, guard)) {
       this.fragments.activate(i);
     }
+    if (this.damageResponse) this.breakDamaged(center, radius, profile?.coreFraction, round);
     if (profile) this.shatterGlass(center, profile.glassShatterRadius);
     this.wakeFrozen(
       (p) => (p.x - center.x) ** 2 + (p.y - center.y) ** 2 + (p.z - center.z) ** 2 <= radius ** 2,
@@ -201,13 +241,18 @@ export class DestructionSystem {
    * 이미 손상된 조각은 더 넓게 떨어져 나간다: 코어 반경 비율 + damage × damagedCoreBoost.
    * (엣지가 이미 끊겨 breakInBlast가 할 일이 없어도 '맞은 반응'이 나게)
    */
-  private breakDamaged(center: Vec3Like, radius: number, coreFraction?: number): void {
+  private breakDamaged(
+    center: Vec3Like,
+    radius: number,
+    coreFraction: number | undefined,
+    round: number,
+  ): void {
     const g = this.graph;
     const p = this.positions;
     const base = coreFraction ?? EXPLOSION.coreFraction;
     for (let i = 0; i < g.nodeCount; i++) {
       const d = this.damage.damage[i]!;
-      if (!g.attached[i] || d <= 0) continue;
+      if (!g.attached[i] || d <= 0 || this.durability.protectedIn(i, round)) continue;
       const reach = radius * Math.min(1, base + d * DAMAGE_VISUAL.damagedCoreBoost);
       const d2 =
         (p[i * 3]! - center.x) ** 2 +
@@ -236,6 +281,15 @@ export class DestructionSystem {
   /** center 근처 손상도 (관통 저항 계산용) */
   damageNear(center: Vec3Like, radius: number): number {
     return this.damage.damageNear(center, radius);
+  }
+
+  /** 화재: 타는 서 있는 조각의 내구도를 1씩 깎는다 (BuildingFire가 fireTickSec마다) */
+  wearBurning(nodes: readonly number[]): void {
+    for (const i of nodes) {
+      if (!this.graph.attached[i] || !this.durability.wear(i)) continue;
+      this.stats.durabilityHits++;
+      this.onDurabilityHit?.(i, 1, false);
+    }
   }
 
   /** 반경 안의 서 있는 유리를 전부 구조에서 떼어낸다 */
@@ -353,15 +407,31 @@ export class DestructionSystem {
    */
   private shatter(chunk: Chunk, dv: number): void {
     const g = this.graph;
+    const dur = this.durability;
     const inChunk = new Set(chunk.frags);
+    // 내구도 블록은 착지 충격에 쪼개지지 않고 내구도만 1 깎인다 (한 번의 충격에 조각당 1회)
+    const worn = new Set<number>();
     for (const i of chunk.frags) {
       for (let k = g.incidentStart[i]!; k < g.incidentStart[i + 1]!; k++) {
         const e = g.incident[k]!;
-        if (!g.alive[e] || !inChunk.has(g.other(e, i))) continue;
+        const j = g.other(e, i);
+        if (!g.alive[e] || !inChunk.has(j)) continue;
         const stress = g.capacity[e]! / Math.max(g.area[e]!, 1e-9);
         const threshold =
           STRUCTURE.impactBreakSpeed * Math.sqrt(stress / STRUCTURE.strengthPerArea);
-        if (dv > threshold) g.breakEdge(e);
+        if (dv <= threshold) continue;
+        const held = [i, j].filter((n) => dur.enabled && dur.current[n]! > 0);
+        if (held.length === 0) {
+          g.breakEdge(e);
+          continue;
+        }
+        for (const n of held) {
+          if (worn.has(n)) continue;
+          worn.add(n);
+          dur.wear(n);
+          this.stats.durabilityHits++;
+          this.onDurabilityHit?.(n, 1, false);
+        }
       }
     }
     const comps = g.components(chunk.frags);
@@ -412,6 +482,21 @@ export class DestructionSystem {
     // 이미 많이 손상된 조각은 작은 충돌에도 떨어진다
     const weak = this.damageResponse && this.damage.damage[i]! >= DAMAGE_VISUAL.chainDamage;
     if (!weak && energy <= STRUCTURE.chainJoulesPerKg * g.supportCapacity(i)) return false;
+    // 떨어질 만한 충돌이지만 내구도가 남았으면 버티고 깎이기만 한다
+    const lost = this.durability.hit(
+      i,
+      energy,
+      this.durability.begin(),
+      DURABILITY.chainEnergyPerPoint,
+      DURABILITY.chainMinHitEnergy,
+    );
+    if (lost >= 0) {
+      if (lost > 0) {
+        this.stats.durabilityHits++;
+        this.onDurabilityHit?.(i, lost, true);
+      }
+      return false;
+    }
     g.detach(i);
     this.fragments.activate(i);
     this.solver.markDirty();

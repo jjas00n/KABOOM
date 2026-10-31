@@ -577,6 +577,7 @@ export class Game {
         mass: d.graph.mass,
         kind: (i) => this.site.kindOf(i),
         material: (i) => (frags[i]!.material === MATERIAL.glass ? 'glass' : 'concrete'),
+        durability: (i) => d.durability.max[i]!,
       },
       this.site.settings.seed,
     );

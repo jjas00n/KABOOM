@@ -9,6 +9,7 @@ import { DAMAGE_VISUAL, PENETRATION, PHYSICS, STRUCTURE } from '../src/config';
 import { DamageModel } from '../src/destruction/DamageModel';
 import { DamageView } from '../src/destruction/DamageView';
 import { DestructionSystem } from '../src/destruction/DestructionSystem';
+import { Durability } from '../src/destruction/Durability';
 import { checkInvariants } from '../src/destruction/Invariants';
 import { MATERIAL, type Fragment } from '../src/fracture/Fragment';
 import { createFragmentMaterials, withRim, RIM_ATTRIBUTE } from '../src/fracture/FragmentMeshes';
@@ -54,6 +55,12 @@ async function site() {
     (i) => ({ anchor: member(i).anchor, cladding: CLADDING.includes(member(i).kind) }),
     0,
     true,
+    Durability.initial(
+      frags.length,
+      (i) => member(i).kind,
+      (i) => member(i).anchor,
+      1,
+    ),
   );
   system.ground = ground;
   const view = new DamageView(system, physics, materials);
@@ -184,7 +191,8 @@ describe('pass-through fix and invariants (6층 Medium, 같은 자리 연속 사
   });
 
   it('shooting the damaged spot again digs deeper', () => {
-    expect(depth[1]!).toBeLessThan(depth[0]! - 2);
+    // 내구도: 둘째 발은 구조재 내구도를 깎고, 셋째 발이 뚫고 들어간다 (전엔 둘째 발에 바로)
+    expect(depth[2]!).toBeLessThan(depth[0]! - 2);
   });
 
   it('weak fragments drop on their own, never more than the per-step cap', () => {

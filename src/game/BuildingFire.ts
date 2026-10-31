@@ -2,7 +2,7 @@
 //   step   (물리 시간) 화재 틱 → 엣지 용량이 줄었으면 CollapseSolver에 알림
 //   update (렌더 프레임) 타는 조각 중 몇 개를 뽑아 불꽃·연기 방출, 그을음·불씨 색, 큰 화재 구역에 라이트
 import { Color, Vector3, type PointLight } from 'three';
-import { FIRE } from '../config';
+import { DURABILITY, FIRE } from '../config';
 import { FireSystem } from '../destruction/FireSystem';
 import type { DestructionSystem } from '../destruction/DestructionSystem';
 import type { Vec3Like } from '../fracture/polyhedron';
@@ -32,6 +32,8 @@ export class BuildingFire {
   private readonly lights: (PointLight | null)[] = [];
   private readonly cells = new Map<number, Cell>();
   private visualAcc = 0;
+  /** 화재 내구도 감소 틱 누적 (물리 시간) */
+  private wearAcc = 0;
   private ticks = 0;
   private time = 0;
 
@@ -87,6 +89,11 @@ export class BuildingFire {
   step(dt: number): void {
     const r = this.system.update(dt);
     if (r.weakened) this.destruction.solver.capacityChanged();
+    this.wearAcc += dt;
+    if (this.wearAcc >= DURABILITY.fireTickSec) {
+      this.wearAcc -= DURABILITY.fireTickSec;
+      this.destruction.wearBurning(this.system.burningNodes);
+    }
   }
 
   /** 렌더 프레임마다. physicsDt: 물리 배속이 반영된 경과 시간 */

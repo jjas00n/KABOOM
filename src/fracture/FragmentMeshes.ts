@@ -20,7 +20,15 @@ import {
   Vector4,
   type Material,
 } from 'three';
-import { CONCRETE, DAMAGE_VISUAL, FIRE, GLASS, TEXTURES, type GlassMode } from '../config';
+import {
+  CONCRETE,
+  DAMAGE_VISUAL,
+  DURABILITY,
+  FIRE,
+  GLASS,
+  TEXTURES,
+  type GlassMode,
+} from '../config';
 import { NOISE_GLSL } from '../fx/noise';
 import type { Assets } from '../core/Assets';
 import { createRng } from './seeds';
@@ -224,6 +232,8 @@ uniform float uDamageCrackStrength;
 uniform float uDamageNoise;
 uniform float uDamageGrime;
 uniform float uDamageEdgeNormal;
+uniform float uFlashSec;
+uniform float uFlashBrightness;
 varying vec3 vEmberPos;
 varying float vRim;
 varying vec4 vDamage;
@@ -247,6 +257,12 @@ if ( kDamage > 0.001 ) {
 
 // 경계 근처 노멀을 흔들어 모서리가 부서진 느낌
 const DAMAGE_NORMAL = /* glsl */ `
+// 내구도로 버틴 타격: 맞은 순간(vDamage.a = 피격 시각) 잠깐 밝아진다
+if ( vDamage.a > 0.0 ) {
+  float kSince = uFireTime - vDamage.a;
+  float kFlash = kSince >= 0.0 ? 1.0 - smoothstep( 0.0, uFlashSec, kSince ) : 0.0;
+  totalEmissiveRadiance += diffuseColor.rgb * uFlashBrightness * kFlash;
+}
 if ( kDamage > 0.001 ) {
   vec3 kQ = vEmberPos * uDamageNoise * 0.6;
   vec3 kJitter = vec3( kNoise( kQ ), kNoise( kQ + 3.7 ), kNoise( kQ + 7.1 ) ) - 0.5;
@@ -297,6 +313,8 @@ function addSurfaceFx(
     u.uDamageNoise = { value: DAMAGE_VISUAL.crackNoiseScale };
     u.uDamageGrime = { value: DAMAGE_VISUAL.grimeStrength };
     u.uDamageEdgeNormal = { value: DAMAGE_VISUAL.edgeNormalNoise };
+    u.uFlashSec = { value: DURABILITY.flashSec };
+    u.uFlashBrightness = { value: DURABILITY.flashBrightness };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>${FX_VERTEX_PARS}`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>${FX_VERTEX}`);
@@ -440,14 +458,18 @@ export class FragmentMeshes {
     for (const { batch, id } of this.slots[i]!) batch.setColorAt(id, rgba);
   }
 
-  /** 조각 i의 손상 외관 값 (damage 0~1, 매달림 0~1, 흔들림 위상 0~1). flushDamage 전까지 GPU에 안 올라간다 */
-  setDamage(i: number, damage: number, hanging: number, phase: number): void {
+  /**
+   * 조각 i의 손상 외관 값: damage 0~1, 매달림 0~1, 흔들림 위상 0~1, 마지막 피격 시각(번쩍임, 0 = 없음).
+   * flushDamage 전까지 GPU에 안 올라간다
+   */
+  setDamage(i: number, damage: number, hanging: number, phase: number, hitTime = 0): void {
     for (const { batch, id } of this.slots[i]!) {
       const b = this.damageBatches.get(batch);
       if (!b) continue;
       b.data[id * 4] = damage;
       b.data[id * 4 + 1] = hanging;
       b.data[id * 4 + 2] = phase;
+      b.data[id * 4 + 3] = hitTime;
       b.dirty = true;
     }
   }
