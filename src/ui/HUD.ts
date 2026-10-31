@@ -9,6 +9,8 @@ const HINTS: Record<GameState, string> = {
   [GameState.PROJECTILE_CAM]: '',
   [GameState.IMPACT]: '',
   [GameState.SPECTATE]: 'Drag: look around · C: cannon · F: wizard · Esc: back · R: reset',
+  [GameState.FINALE]: 'Click / Space: skip',
+  [GameState.RESULT]: '',
 };
 
 export class HUD {

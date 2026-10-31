@@ -8,6 +8,7 @@ import { DEFAULT_BUILDING, generateBuilding } from '../src/building/BuildingGene
 import { allocateSeeds, memberSeeds } from '../src/building/seedBudget';
 import { PHYSICS, STRUCTURE } from '../src/config';
 import { DestructionSystem } from '../src/destruction/DestructionSystem';
+import { Durability } from '../src/destruction/Durability';
 import { MATERIAL } from '../src/fracture/Fragment';
 import { createFragmentMaterials } from '../src/fracture/FragmentMeshes';
 import { runFracture } from '../src/fracture/pipeline';
@@ -25,7 +26,7 @@ const BASELINE = {
   speed: 96,
   mass: 500,
   muzzle: [-0.183206, 5.113441, 57.422282],
-  detached: 32,
+  detached: 23, // 내구도(6++) 도입 전 32 (구조재가 한 발에 버틴다: 의도된 변화)
 };
 
 async function fireCannon(yaw: number, pitch: number, power: number) {
@@ -54,6 +55,15 @@ async function fireCannon(yaw: number, pitch: number, power: number) {
       anchor: member(i).anchor,
       cladding: CLADDING.includes(member(i).kind),
     }),
+    0,
+    false,
+    // 게임과 같은 내구도 (건물 seed 21)
+    Durability.initial(
+      frags.length,
+      (i) => member(i).kind,
+      (i) => member(i).anchor,
+      21,
+    ),
   );
   system.ground = ground;
   const spin = createRng(5);

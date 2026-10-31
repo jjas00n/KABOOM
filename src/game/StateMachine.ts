@@ -3,6 +3,7 @@
 //   IDLE ─[대포/마법사]→ CUTSCENE ─(비행 끝/스킵)→ AIMING ─[발사]→ PROJECTILE_CAM
 //   PROJECTILE_CAM ─(충돌)→ IMPACT ─(hit-stop 끝)→ SPECTATE   (빗나가면 PROJECTILE_CAM → SPECTATE)
 //   SPECTATE ─[대포/마법사]→ CUTSCENE,  SPECTATE ─[리셋/뒤로]→ IDLE
+//   IMPACT·SPECTATE ─(파괴율 ≥ 임계값, 건물당 1회)→ FINALE ─(연출 끝/스킵)→ RESULT ─[다음 주문]→ IDLE
 import type { LauncherId } from './Launcher';
 
 export const GameState = {
@@ -12,10 +13,12 @@ export const GameState = {
   PROJECTILE_CAM: 'PROJECTILE_CAM',
   IMPACT: 'IMPACT',
   SPECTATE: 'SPECTATE',
+  FINALE: 'FINALE',
+  RESULT: 'RESULT',
 } as const;
 export type GameState = (typeof GameState)[keyof typeof GameState];
 
-const { IDLE, CUTSCENE, AIMING, PROJECTILE_CAM, IMPACT, SPECTATE } = GameState;
+const { IDLE, CUTSCENE, AIMING, PROJECTILE_CAM, IMPACT, SPECTATE, FINALE, RESULT } = GameState;
 
 /** 허용 전이 표 */
 export const TRANSITIONS: Readonly<Record<GameState, readonly GameState[]>> = {
@@ -23,8 +26,10 @@ export const TRANSITIONS: Readonly<Record<GameState, readonly GameState[]>> = {
   [CUTSCENE]: [AIMING],
   [AIMING]: [PROJECTILE_CAM],
   [PROJECTILE_CAM]: [IMPACT, SPECTATE],
-  [IMPACT]: [SPECTATE],
-  [SPECTATE]: [CUTSCENE, IDLE],
+  [IMPACT]: [SPECTATE, FINALE],
+  [SPECTATE]: [CUTSCENE, IDLE, FINALE],
+  [FINALE]: [RESULT],
+  [RESULT]: [IDLE],
 };
 
 export type StateListener = (from: GameState, to: GameState) => void;

@@ -1,16 +1,19 @@
 // 파괴 이펙트 묶음: 먼지(Dust) + 부스러기·섬광(Sparks) + 불(Fire).
 // 파티클 시계는 물리 시간(실제 시간 × timeScale)이라 hit-stop·킬캠 슬로모션에서 같이 느려진다.
 import type { Scene } from 'three';
-import { DUST, type QualityPreset } from '../config';
+import { DURABILITY, DUST, type QualityPreset } from '../config';
 import type { Vec3Like } from '../fracture/polyhedron';
 import { Dust } from './Dust';
 import { Fire } from './Fire';
+import { FinaleBurst } from './FinaleBurst';
 import { Sparks } from './Sparks';
 
 export class Effects {
   readonly dust: Dust;
   readonly sparks: Sparks;
   readonly fire: Fire;
+  /** 완파 피날레 GPU 파편 */
+  readonly burst: FinaleBurst;
   /** 물리 시간 (s) */
   private time = 0;
   /** 이번 프레임에 일으킨 지면 충돌 이펙트 수 (상한 DUST.maxGroundImpactsPerFrame) */
@@ -20,6 +23,7 @@ export class Effects {
     this.dust = new Dust(scene);
     this.sparks = new Sparks(scene, quality);
     this.fire = new Fire(scene);
+    this.burst = new FinaleBurst(scene);
   }
 
   setQuality(quality: QualityPreset): void {
@@ -47,6 +51,12 @@ export class Effects {
     this.sparks.groundImpact(point);
   }
 
+  /** 조각이 내구도로 버팀: 칩 + 작은 돌가루 */
+  durabilityHit(point: Vec3Like): void {
+    this.sparks.chips(point, DURABILITY.chipsPerHit);
+    this.dust.puff(point, DUST.groundSize * 0.7);
+  }
+
   glassBroken(point: Vec3Like): void {
     this.sparks.glassBroken(point);
   }
@@ -58,6 +68,7 @@ export class Effects {
     this.dust.update(this.time);
     this.sparks.update(this.time);
     this.fire.update(this.time);
+    this.burst.update(this.time);
   }
 
   /** 건물 재생성: 남은 파티클을 없앤다 */
@@ -65,5 +76,6 @@ export class Effects {
     this.dust.clear();
     this.sparks.clear();
     this.fire.clear();
+    this.burst.clear();
   }
 }

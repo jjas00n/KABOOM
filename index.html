@@ -137,6 +137,188 @@
         background: #e0622c;
         color: #fff;
       }
+      .eco-hud {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        min-width: 220px;
+        padding: 10px 14px 12px;
+        border-radius: 10px;
+        background: rgb(20 20 24 / 0.72);
+        color: #f2f2f2;
+        font:
+          600 13px/1.4 system-ui,
+          sans-serif;
+        pointer-events: none;
+      }
+      .eco-money {
+        font-size: 28px;
+        font-weight: 800;
+        color: #ffd25a;
+        font-variant-numeric: tabular-nums;
+        transition: transform 0.15s;
+      }
+      .eco-money.rolling {
+        transform: scale(1.06);
+      }
+      .eco-building {
+        opacity: 0.8;
+        font-variant-numeric: tabular-nums;
+      }
+      .eco-bar {
+        position: relative;
+        height: 8px;
+        margin-top: 8px;
+        border-radius: 4px;
+        background: rgb(255 255 255 / 0.15);
+      }
+      .eco-bar-fill {
+        height: 100%;
+        width: 0;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #8a8f99, #e0622c);
+        transition: width 0.2s;
+      }
+      .eco-bar-fill.done {
+        background: linear-gradient(90deg, #e0622c, #ffd25a);
+      }
+      .eco-bar-mark {
+        position: absolute;
+        top: -3px;
+        width: 2px;
+        height: 14px;
+        background: #fff;
+      }
+      .eco-bar-label {
+        margin-top: 4px;
+        font-size: 12px;
+        opacity: 0.8;
+      }
+      .money-popups {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        overflow: hidden;
+      }
+      .money-popup {
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: #ffe9a8;
+        font:
+          800 18px/1 system-ui,
+          sans-serif;
+        text-shadow: 0 2px 6px rgb(0 0 0 / 0.7);
+        white-space: nowrap;
+        will-change: transform, opacity;
+      }
+      .money-popup.big {
+        color: #ffcf3a;
+        text-shadow:
+          0 0 12px rgb(255 190 40 / 0.8),
+          0 2px 6px rgb(0 0 0 / 0.8);
+      }
+      .money-popup.rare {
+        color: #fff6c8;
+        text-shadow:
+          0 0 16px rgb(255 230 120 / 1),
+          0 0 4px rgb(255 255 255 / 1);
+      }
+      .money-big {
+        position: absolute;
+        left: 50%;
+        top: 38%;
+        transform: translate(-50%, -50%);
+        color: #ffd25a;
+        font:
+          900 64px/1 system-ui,
+          sans-serif;
+        text-align: center;
+        -webkit-text-stroke: 2px #6b3a00;
+        text-shadow: 0 3px 0 rgb(0 0 0 / 0.6);
+        opacity: 0;
+      }
+      .money-big-label {
+        margin-top: 8px;
+        font-size: 18px;
+        font-weight: 700;
+        color: #fff2c8;
+      }
+      .finale-banner {
+        position: fixed;
+        left: 50%;
+        top: 22%;
+        transform: translate(-50%, -50%);
+        color: #fff;
+        font:
+          900 88px/1 system-ui,
+          sans-serif;
+        letter-spacing: 0.06em;
+        -webkit-text-stroke: 3px #c2410c;
+        text-shadow: 0 4px 0 rgb(0 0 0 / 0.6);
+        pointer-events: none;
+        opacity: 0;
+      }
+      .result {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        min-width: 360px;
+        padding: 22px 26px 20px;
+        border-radius: 14px;
+        background: rgb(20 20 24 / 0.9);
+        color: #f2f2f2;
+        font:
+          600 15px/1.5 system-ui,
+          sans-serif;
+        box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+      }
+      .result-title {
+        margin-bottom: 12px;
+        font-size: 22px;
+        font-weight: 800;
+        color: #ffd25a;
+      }
+      .result-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        font-variant-numeric: tabular-nums;
+      }
+      .result-row.total {
+        margin: 4px 0 8px;
+        padding-top: 6px;
+        border-top: 1px solid rgb(255 255 255 / 0.2);
+        font-size: 18px;
+        font-weight: 800;
+        color: #ffd25a;
+      }
+      .result-next {
+        margin-top: 16px;
+        width: 100%;
+      }
+      .graph-legend {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: rgb(20 20 24 / 0.8);
+        color: #e8e8e8;
+        font:
+          12px/1.6 system-ui,
+          sans-serif;
+        pointer-events: none;
+      }
+      .graph-legend span {
+        display: inline-block;
+        width: 18px;
+        height: 4px;
+        margin-right: 8px;
+        vertical-align: middle;
+        border-radius: 2px;
+      }
       .hud-button:disabled {
         opacity: 0.4;
         cursor: default;

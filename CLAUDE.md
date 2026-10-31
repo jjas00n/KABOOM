@@ -31,6 +31,12 @@
 4. **구조 무결성 그래프**: 조각들을 인접(면 공유) 관계로 연결한 그래프. 지면에 고정된 조각에서 BFS로 도달 불가능한 조각 = 지지 상실 → 동적(dynamic) 전환 → **연쇄 붕괴**.
 5. 피격 전 조각은 물리적으로 `fixed`(또는 sleeping) 상태라 비용이 거의 없다. 활성화된 조각만 시뮬레이션.
 6. 품질 프리셋 Low/Medium/High (조각 수 대략 1.5k / 4k / 8k). 기본 Medium.
+7. **조각 내구도**(`destruction/Durability.ts`): 조각마다 정수 내구도 (부재별 기본값: 기둥 2, 보·슬래브 1, 외벽·유리 0 + seed 지터).
+   - 직접 타격(폭발·충돌 연쇄·착지 분해)에는 버티며 내구도만 깎인다. 0이 된 뒤 다음 타격에 분리된다.
+   - **지지 상실·과부하·느슨 낙하는 내구도를 무시한다** (공중에 뜬 블록 없음).
+   - 구조(엣지 용량·하중)와 역할이 다르다: 엣지 = 무엇이 무엇을 받치나, 내구도 = 조각 하나의 체력.
+   - 외관은 damage와 합친다: 균열 = max(damage, 내구도 손실), 피격 번쩍임, 살짝 밀림 (콜라이더도 같이).
+   - 단단한 조각은 처음부터 짙은 톤이다. 피날레(7-2)는 `ignoreDurability`로 무시한다.
 
 ## 게임 흐름 (상태 머신)
 ```
@@ -38,7 +44,12 @@ IDLE ─[대포/마법사 버튼]→ CUTSCENE(launcher) ─(카메라 스플라�
 AIMING ─[발사(마법사는 충전 0.6s 뒤)]→ PROJECTILE_CAM ─(충돌)→ IMPACT(hit-stop ~0.3s) → SPECTATE
 SPECTATE ─[대포/마법사 버튼]→ CUTSCENE (부서진·불타는 건물에 재발사 가능)
 SPECTATE ─[뒤로]→ IDLE (건물 유지),  SPECTATE ─[리셋]→ IDLE (건물 재생성)
+IMPACT·SPECTATE ─(파괴율 ≥ 85%, 건물당 1회)→ FINALE(완파 피날레 ~4s, 스킵 가능) → RESULT ─[다음 주문]→ IDLE (새 건물)
 ```
+- **완파 피날레**(`game/Finale.ts` 정리·정산, `game/FinaleDirector.ts` 연출, `economy/Completion.ts` 1회 판정):
+  - 남은 조각 가치를 'finale'로 한 번에 정산하고 완료 보너스를 준다.
+  - 위→아래 웨이브로 분리한다 (스텝당 상한). 부피 큰 조각만 물리(동시 dynamic ≤ 1000), 나머지는 숨기고 GPU 파편(`fx/FinaleBurst.ts`)으로 대체한다.
+  - 결과 화면(`ui/ResultScreen.ts`, `game/RunStats.ts`) 합계 = 지갑 증가분.
 - 상태 머신은 `src/game/StateMachine.ts` 한 곳에서만 상태를 바꾼다. 카메라·입력·UI는 상태 변경 이벤트를 구독.
 - **발사대(Launcher)**: 대포(`Cannon`)와 파이어볼 마법사(`Wizard`, 건물 기준 대포 반대편 바위 위)가
   `game/Launcher.ts` 인터페이스를 구현한다. `transition(CUTSCENE, launcherId)`로 상태 머신이 선택도 같이 바꾸고
@@ -46,6 +57,27 @@ SPECTATE ─[뒤로]→ IDLE (건물 유지),  SPECTATE ─[리셋]→ IDLE (건
 - **피해 모델이 다르다**: 대포 = 운동에너지 관통(+엑스레이 킬캠). 파이어볼 = 넓고 얕은 화염 폭발(BlastProfile,
   반경 안 유리 전부 파손) + **화재**(`destruction/FireSystem.ts`): 구조 그래프 위 heat/fuel/burning/charred,
   위로 빠르게·아래로 느리게 확산, 타는 조각의 엣지 용량을 깎아 CollapseSolver가 **지연 붕괴**시킨다.
+
+## 손상 외관과 불변 조건 (논리 상태 = 외관)
+- **보이는 조각은 반드시 맞는다**: 잔해 충돌 그룹(발사체 통과)은 움직이는 동안만. 굳으면(fixed) 기본 그룹.
+- 불변 조건(`destruction/Invariants.ts`, 테스트 + 디버그 GUI 주기 검사):
+  1. 보이는 조각은 콜라이더가 있고, fixed면 발사체와 부딪힌다.
+  2. 그래프에서 떨어진 조각은 반드시 dynamic을 거친다.
+  3. 렌더↔콜라이더 오차 1cm 이하.
+- 조각 damage(0~1, `DamageModel`): 끊긴 연결 면적 + 엣지 누적손상 + 화재 약화.
+  - 서 있는 조각은 손상 자세(틈·처짐·기울어짐)로 **fixed 바디째** 순간이동한다 (`PhysicsWorld.teleport`).
+  - 균열·열화·흔들림은 배치별 DataTexture → 셰이더. 재질·드로우콜은 늘리지 않는다.
+- 너무 약해진 조각은 스텝당 상한까지 떨어뜨린다.
+- 손상된 곳을 맞히면 더 넓게 떨어져 나가고, 관통 저항이 낮아 더 깊이 파인다.
+
+## 경제 (Phase 7, 파편 = 돈)
+- `src/economy/`는 물리·렌더를 import하지 않는 순수 로직이다. `DestructionSystem.onReleased`(조각이 dynamic으로 전환) 이벤트만 구독한다.
+- 조각 가치 = max(질량 × 단가, 최소 가치) × `Modifiers.total` × 희귀 배수.
+  - 기초는 단가 0이라 수익도 파괴율도 아니다.
+  - 장부(`BuildingLedger`)가 조각마다 한 번만 지급한다.
+- 모든 배율은 `Modifiers` 한 곳에서 합성한다: (1 + 가산 합) × 곱셈 배율 곱. Phase 10 업그레이드가 여기에 붙는다.
+- 파괴율 = 분리된 질량 / 기초 제외 전체 질량. CollapseSolver 주기에만 갱신한다.
+- 수익 출처는 fragments / finale / bonus로 나뉜다 (`Wallet`).
 - 컷신 카메라는 `CatmullRomCurve3` + easing. 스킵(클릭/Space) 가능.
 - AIMING: 대포 포신 뒤 3인칭 or 포신 안 1인칭, 마우스로 yaw/pitch(제한 각도), 휠/키로 파워, 예상 궤적 점선(선택).
 - PROJECTILE_CAM: 발사체 뒤를 따라가는 체이스 캠(약간의 지연/스무딩).
@@ -56,16 +88,21 @@ SPECTATE ─[뒤로]→ IDLE (건물 유지),  SPECTATE ─[리셋]→ IDLE (건
 src/
   main.ts
   core/        Renderer, Loop(고정 timestep 물리 60Hz + 렌더 보간), Assets
-  physics/     PhysicsWorld(Rapier 래퍼), 충돌 이벤트
+  physics/     PhysicsWorld(Rapier 래퍼, teleport), 충돌 이벤트·충돌 그룹, ColliderOverlay(디버그 콜라이더 표시)
   fracture/    voronoi.ts(반공간 클리핑), Fragment.ts, seeds.ts
   building/    BuildingGenerator.ts, members(Column/Slab/WallPanel/Window), StructureGraph.ts
   destruction/ Explosion.ts(임펄스·BlastShape), CollapseSolver.ts(지지 BFS), DebrisManager.ts(정리/수명),
-               FireSystem.ts(화재 확산·연소·약화, 순수 로직)
+               FireSystem.ts(화재 확산·연소·약화, 순수 로직), DamageModel.ts(조각 손상도·자세·느슨 판정),
+               DamageView.ts(손상 자세·텍스처 적용), Invariants.ts(불변 조건), Durability.ts(조각 내구도)
+  economy/     Wallet.ts, Modifiers.ts, FragmentValue.ts, BuildingLedger.ts, Economy.ts, Completion.ts (순수 로직)
   game/        StateMachine.ts, Launcher.ts(발사대 인터페이스), Cannon.ts, Wizard.ts, fireball.ts,
-               Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결)
+               Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결),
+               Finale.ts, FinaleDirector.ts, RunStats.ts (완파 피날레·결과)
   camera/      CutsceneCam.ts, AimCam.ts, ChaseCam.ts, SpectateCam.ts, CameraShake.ts
-  fx/          Dust.ts, Sparks.ts, Fire.ts(불꽃·연기·불씨), FireballVisual.ts, LightPool.ts(고정 개수), PostFX.ts
-  ui/          HUD(대포 버튼, 파워 게이지, 리셋, 품질 선택), 디버그 GUI
+  fx/          Dust.ts, Sparks.ts, Fire.ts(불꽃·연기·불씨), FireballVisual.ts, LightPool.ts(고정 개수), Rebar.ts,
+               MoneyPopups.ts(+$ 묶음 팝업), FinaleBurst.ts(피날레 GPU 파편), PostFX.ts
+  ui/          HUD(대포 버튼, 파워 게이지, 리셋, 품질 선택), EconomyHud(돈·이번 건물 수익·파괴율 바),
+               ResultScreen(완파 배너·결과 화면), 디버그 GUI
   audio/       AudioManager.ts
 tests/         vitest 단위 테스트
 ```

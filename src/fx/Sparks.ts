@@ -160,6 +160,16 @@ class Shards {
     }
   }
 
+  /** 내구도로 버틴 타격: 표면에서 튀는 작은 칩 */
+  chips(point: Vec3Like, count: number): void {
+    for (let i = 0; i < count; i++) {
+      randomDirection(direction);
+      direction.y = Math.abs(direction.y) * 0.5 + 0.3;
+      direction.multiplyScalar(SHARDS.groundSpeed * (0.4 + 0.6 * Math.random()));
+      this.emit(point, 0.15, direction, this.concrete);
+    }
+  }
+
   /** 유리 조각이 떨어져 나감: 유리색 반짝이 */
   glassBroken(point: Vec3Like): void {
     for (let i = 0; i < SHARDS.glassPerFragment; i++) {
@@ -314,6 +324,10 @@ export class Sparks {
 
   glassBroken(point: Vec3Like): void {
     this.shards.glassBroken(point);
+  }
+
+  chips(point: Vec3Like, count: number): void {
+    this.shards.chips(point, count);
   }
 
   /** time: 물리 시간 */

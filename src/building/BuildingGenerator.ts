@@ -22,6 +22,8 @@ export interface BuildingParams {
   windowRatio: number;
   /** 분할 시드 난수용. 레이아웃 자체는 결정적이다. */
   seed: number;
+  /** 내구도가 있는 조각(기둥·슬래브 등)에 더하는 값 (7-3 '보강 건물' 주문 특징 자리) */
+  durabilityBonus: number;
 }
 
 export const DEFAULT_BUILDING: BuildingParams = {
@@ -32,6 +34,7 @@ export const DEFAULT_BUILDING: BuildingParams = {
   columnSpacing: BUILDING.columnSpacing,
   windowRatio: BUILDING.windowRatio,
   seed: BUILDING.seed,
+  durabilityBonus: 0,
 };
 
 export interface Building {

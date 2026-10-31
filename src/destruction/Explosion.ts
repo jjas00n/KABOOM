@@ -3,6 +3,7 @@
 // - breakInBlast: 반경 안 구조 엣지를 끊고, 코어 안 조각과 거의 다 끊긴 조각은 구조에서 떼어낸다
 //   (그래프만 바꾼다). BlastShape로 끊는 범위를 반경 대비 비율로 바꿀 수 있다
 //   (대포 = 기본값: 반경 전체 엣지 + 코어 0.5, 화염 폭발 = 넓은 반경에 얕게)
+//   guard(내구도)가 버틴다고 한 조각은 떼어내지 않고, 그 조각에 붙은 엣지도 끊지 않는다
 // - applyExplosion: dynamic 바디에 거리 감쇠 임펄스
 import { Vector3 } from 'three';
 import { EXPLOSION, STRUCTURE } from '../config';
@@ -31,6 +32,13 @@ export const DEFAULT_BLAST_SHAPE: BlastShape = {
   coreFraction: EXPLOSION.coreFraction,
   edgeFraction: 1,
 };
+
+/** 조각 i(폭심에서 dist m)가 이번 폭발에 버티는지. 판정 자체(내구도 감소)도 여기서 한다 */
+export type BlastGuard = (node: number, dist: number) => boolean;
+
+/** 이번 폭발에서 버틴 조각 표시 (그래프 크기에 맞춰 늘려 재사용) */
+let held = new Uint8Array(0);
+const heldList: number[] = [];
 
 const dir = new Vector3();
 const impulse = new Vector3();
@@ -97,6 +105,7 @@ export function blastRadius(energy: number): number {
  * - 반경 × rubbleRange 안에서 처음 연결 면적의 rubbleFraction도 안 남은 조각(거의 다 부서져
  *   간신히 매달린 조각)도 떼어낸다. 여러 번 맞은 자리에 너덜너덜한 잔재가 남지 않게.
  * positions: 노드 질량중심 xyz 평탄화 (서 있는 노드는 움직이지 않으므로 원래 위치)
+ * guard: 내구도 판정. 버틴 조각은 떼어내지 않고 붙은 엣지도 끊지 않는다 (없으면 예전과 같다)
  * 반환: 떼어낸 노드
  */
 export function breakInBlast(
@@ -105,19 +114,38 @@ export function breakInBlast(
   center: Vec3Like,
   radius: number,
   shape: BlastShape = DEFAULT_BLAST_SHAPE,
+  guard?: BlastGuard,
 ): number[] {
   const reach = radius * shape.edgeFraction;
   const r2 = reach * reach;
   const core = radius * shape.coreFraction;
   const core2 = core * core;
+  const rubble = reach * STRUCTURE.rubbleRange;
+  const rubble2 = rubble * rubble;
   const dist2 = (x: number, y: number, z: number) =>
     (x - center.x) ** 2 + (y - center.y) ** 2 + (z - center.z) ** 2;
+
+  // 내구도: 영향 범위(엣지·코어·rubble 중 가장 넓은 곳) 안 조각마다 한 번 판정해 버틴 조각을 표시
+  if (guard) {
+    if (held.length < graph.nodeCount) held = new Uint8Array(graph.nodeCount);
+    const range2 = Math.max(core2, r2, rubble2);
+    for (let i = 0; i < graph.nodeCount; i++) {
+      if (!graph.attached[i] || graph.anchor[i]) continue;
+      const p = i * 3;
+      const d2 = dist2(positions[p]!, positions[p + 1]!, positions[p + 2]!);
+      if (d2 > range2 || !guard(i, Math.sqrt(d2))) continue;
+      held[i] = 1;
+      heldList.push(i);
+    }
+  }
+  const isHeld = (i: number) => guard !== undefined && held[i] === 1;
 
   for (let e = 0; e < graph.edgeCount; e++) {
     if (!graph.alive[e]) continue;
     const a = graph.edgeA[e]! * 3;
     const b = graph.edgeB[e]! * 3;
     if (!graph.attached[a / 3] || !graph.attached[b / 3]) continue;
+    if (isHeld(a / 3) || isHeld(b / 3)) continue;
     const mx = (positions[a]! + positions[b]!) / 2;
     const my = (positions[a + 1]! + positions[b + 1]!) / 2;
     const mz = (positions[a + 2]! + positions[b + 2]!) / 2;
@@ -126,22 +154,22 @@ export function breakInBlast(
 
   const detached: number[] = [];
   for (let i = 0; i < graph.nodeCount; i++) {
-    if (!graph.attached[i]) continue;
+    if (!graph.attached[i] || isHeld(i)) continue;
     const p = i * 3;
     if (dist2(positions[p]!, positions[p + 1]!, positions[p + 2]!) <= core2 && graph.detach(i)) {
       detached.push(i);
     }
   }
 
-  const rubble = reach * STRUCTURE.rubbleRange;
-  const rubble2 = rubble * rubble;
   for (let i = 0; i < graph.nodeCount; i++) {
-    if (!graph.attached[i] || graph.anchor[i]) continue;
+    if (!graph.attached[i] || graph.anchor[i] || isHeld(i)) continue;
     const p = i * 3;
     if (dist2(positions[p]!, positions[p + 1]!, positions[p + 2]!) > rubble2) continue;
     if (graph.remainingAreaFraction(i) < STRUCTURE.rubbleFraction && graph.detach(i)) {
       detached.push(i);
     }
   }
+  for (const i of heldList) held[i] = 0;
+  heldList.length = 0;
   return detached;
 }

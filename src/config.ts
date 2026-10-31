@@ -321,8 +321,8 @@ export const FIRE = {
   fuelJitter: 0.35, // 조각마다 ± 비율
   charRate: 0.12, // 타는 동안 charred 증가 /s
   // 구조 약화: 타는 조각에 붙은 엣지 용량이 초당 이 비율씩 줄어든다
-  weakenRate: 0.1,
-  minStrength: 0.12, // 원래 용량 대비 하한
+  weakenRate: 0.05,
+  minStrength: 0.6, // 원래 용량 대비 하한
   // 떨어져 나간 조각
   settledBurnRate: 4, // 굳은 조각은 연료를 이 배수로 빨리 태워 꺼진다
   // 대포 폭발 반경 안에 타는 조각이 있으면 주변에 열 추가 (불씨가 튐)
@@ -370,6 +370,158 @@ export const FIRE = {
   spectateFollowSec: 1.5, // 중심 추적 스무딩 시간상수
 } as const;
 
+/** 손상 외관·느슨한 조각 (destruction/DamageModel.ts, DamageView.ts) */
+export const DAMAGE_VISUAL = {
+  enabled: true, // 외관 효과 (틈·처짐·균열·열화·흔들림). 끄면 원래 자리로
+  updateSec: 0.2, // damage 재계산 주기 (물리 시간)
+  changeEpsilon: 0.02, // 이보다 작은 damage 변화는 무시 (재배치·텍스처 업로드 안 함)
+  // damage = w1·끊긴 연결 면적 비율 + w2·엣지 누적손상 평균 + w3·화재 약화 평균
+  weightBroken: 1.3,
+  weightStrain: 0.5,
+  weightFire: 0.6,
+  // 틈·처짐·기울어짐 (fixed 바디와 렌더를 같이 옮긴다)
+  gapMax: 0.05, // m: 끊긴 이웃에게서 멀어지는 거리 (damage 1일 때)
+  sagMax: 0.08, // m: 아래 지지를 잃으면 처지는 거리
+  tiltMax: 0.06, // rad: 외장재가 바깥으로 기우는 각
+  maxTeleportsPerFrame: 300, // 한 프레임에 옮기는 조각 상한
+  // 셰이더
+  crackWidth: 0.35, // 경계(rim) 쪽 어둡게 할 폭 (damage 1일 때 rim 비율)
+  crackStrength: 0.85,
+  crackNoiseScale: 7, // /m
+  grimeStrength: 0.55, // 먼지·그을음 톤 섞는 정도
+  edgeNormalNoise: 0.6, // 경계 근처 노멀 흔들기
+  swayAmplitude: 0.006, // m: 매달린 조각 흔들림 (불변 조건 1cm 이하)
+  swayHz: 1.3,
+  // 느슨한 조각 낙하
+  looseFactor: 1.5, // 남은 엣지 강도 합 < 자기 무게 × 이 값이면 떨어진다
+  looseMaxEdges: 1, // 남은 엣지가 이 이하이고
+  looseDamage: 0.85, // damage가 이 이상이어도 떨어진다
+  maxLooseDropsPerStep: 2, // 한 물리 스텝에 떨어뜨리는 상한 (한꺼번에 몰리지 않게)
+  looseWakeRange: 1.3, // 폭발 반경 × 이 값 안의 손상 조각은 작은 충격에도 떨어진다
+  looseWakeDamage: 0.6, // 위 범위에서 이 damage 이상이면
+  chainDamage: 0.7, // 잔해에 부딪힌 조각이 이 damage 이상이면 에너지와 무관하게 떨어진다
+  // 이미 손상된 곳을 맞혔을 때
+  damagedCoreBoost: 0.35, // 코어 반경 비율에 + damage × 이 값 (손상 조각은 더 넓게 떨어져 나간다)
+  penetrationDamageFactor: 0.7, // 관통 저항 × (1 - 이 값 × 주변 damage)
+  penetrationSampleRadius: 1.5, // 주변 damage 표본 반경 (m)
+  // 철근 노출
+  rebarMax: 512,
+  rebarMinGap: 0.03, // m: 구조재 사이 틈이 이보다 크면
+  rebarLength: 0.5,
+  rebarRadius: 0.012,
+  rebarColor: 0x5a4636,
+  // 디버그
+  invariantCheckSec: 1, // GUI 불변 조건 검사 주기 (실제 시간)
+  colliderOverlaySec: 0.25,
+  inPlaceDistance: 0.02, // 불변 조건: 원래 자리로 보는 거리 (m)
+  maxRenderError: 0.01, // 불변 조건: 렌더 ↔ 콜라이더 오차 (m)
+} as const;
+
+/**
+ * 조각 내구도 (destruction/Durability.ts, 6++): 직접 타격(폭발·충돌·착지)에 버티는 '체력'.
+ * 1 이상이면 맞아도 바로 떨어지지 않고 내구도만 깎인다. 0이 된 뒤 다음 타격에 분리된다.
+ * 지지 상실·과부하·느슨 낙하는 내구도와 무관하다 (공중에 뜬 블록 없음).
+ */
+export const DURABILITY = {
+  enabled: true,
+  // 부재별 기본 내구도. 없는 종류는 0. core = 코어/계단실 벽 자리 (아직 생성기에 없음)
+  byKind: {
+    wallPanel: 0,
+    glass: 0,
+    parapet: 0,
+    slab: 1,
+    beam: 1,
+    column: 2,
+    core: 3,
+  } as Record<string, number>,
+  jitterUp: 0.25, // 조각마다 이 확률로 +1 (기본값 1 이상인 부재만)
+  jitterDown: 0.15, // 이 확률로 -1 (0 아래로는 안 내려간다)
+  seedSalt: 0x2545f491, // 건물 seed와 섞어 결정적 지터
+  // 폭발: 조각 위치 에너지 = 폭발 에너지 × (1 - 거리/반경)². 감소량 = ceil(에너지 / energyPerPoint), 최소 1
+  energyPerPoint: 8e5, // J (가장 약한 대포 4e5J 정면 = 1, 최대 파워 접촉 2MJ = 3)
+  minHitEnergy: 3e4, // J: 이보다 약하면 버티기만 하고 깎이지 않는다
+  // 충돌 연쇄 (떨어지는 덩어리가 부딪힘): 운동에너지 기준
+  chainEnergyPerPoint: 2e4, // J
+  chainMinHitEnergy: 4e3, // J
+  fireTickSec: 6, // 타는 조각은 이 간격마다 1 감소
+  valuePerPoint: 0.5, // 경제: 조각 가치 × (1 + 이 값 × 최대 내구도)
+  // 외관
+  toneDarkPerPoint: 0.07, // 바탕색을 최대 내구도 1당 이만큼 짙게 (단단해 보이게)
+  crackAtZero: 0.9, // 내구도가 0까지 깎인 조각의 균열 세기 (damage R 채널 하한)
+  nudgeMax: 0.03, // m: 깎일 때마다 살짝 밀림 (손실 비율 × 이 값, 콜라이더도 같이)
+  nudgeAngle: 0.03, // rad
+  flashSec: 0.3, // 맞은 순간 밝아지는 시간
+  flashBrightness: 1.6, // emissive 배수 (HDR)
+  chipsPerHit: 6, // 표면 칩 (시각 전용 부스러기)
+  maxHitEffectsPerBlast: 12, // 한 폭발에서 이펙트를 내는 조각 상한
+} as const;
+
+/** 경제: 파편 = 돈 (src/economy/, Phase 7-1) */
+export const ECONOMY = {
+  // 재질 단가 ($/kg). 부재 종류(kind)가 우선, 없으면 재질로. 0이면 수익 없음 + 파괴율 계산에서도 빠진다
+  pricePerKg: {
+    concrete: 0.004,
+    glass: 0.08, // 얇아서 가볍지만 비싸다
+  } as Record<string, number>,
+  kindPricePerKg: {
+    foundation: 0, // 기초는 돈도 파괴율도 아님
+  } as Record<string, number>,
+  minValue: 1, // 아무리 작은 조각도 최소 이만큼 ($, 단가 0인 조각 제외)
+  orderMultiplier: 1, // 주문 배율 (7-3 주문이 정한다)
+  // 희귀 파편 (훅만, 기본 꺼짐). 건물 seed로 결정 → 같은 건물이면 같은 조각이 희귀
+  rareEnabled: false,
+  rareChance: 0.004,
+  rareMultiplier: 15,
+  rareSalt: 0x9e3779b9, // 건물 seed와 섞는 값
+  rareColor: { r: 1.35, g: 1.05, b: 0.35 }, // 금빛 바탕색 (조각 색에 곱한다)
+  // +$ 팝업 (fx/MoneyPopups.ts)
+  popupBinSec: 0.2, // 이 시간 동안 같은 화면 셀의 수익을 묶어 하나로
+  popupCellPx: 140, // 화면 공간 셀 크기
+  popupWorldCellM: 1.5, // 지급을 먼저 이 크기 월드 격자로 모아 프레임당 셀마다 한 번만 화면 투영
+  popupMax: 24, // 동시에 떠 있는 최대 수 (풀)
+  popupLifeSec: 1.3,
+  popupRisePx: 70,
+  popupBigAmount: 500, // 이 이상이면 크게 강조
+  popupMaxScale: 2.6,
+  // HUD 돈 카운터가 굴러가는 속도
+  counterSmoothingSec: 0.35, // 지수 스무딩 시간상수
+  counterMinSpeed: 30, // $/s: 작은 차이도 이 속도 이상으로 따라간다
+} as const;
+
+/** 완파 피날레 (game/Finale.ts, fx/FinaleBurst.ts, Phase 7-2) */
+export const FINALE = {
+  threshold: 0.85, // 파괴율이 이 이상이면 남은 건물을 한꺼번에 (건물당 1회)
+  // 1) 완파 순간
+  hitStopSec: 0.4, // 실제 시간
+  hitStopScale: 0.08,
+  crackRampSec: 0.6, // 서 있는 조각 균열을 1까지 올리는 시간
+  quakeAmplitude: 0.05, // m: 렌더 전용 진동 (균열 확산 동안)
+  shakeTrauma: 1,
+  // 2) 붕괴 웨이브 (위 → 아래)
+  waveSpeed: 20, // m/s (물리 시간): 웨이브 높이가 내려가는 속도 (6층 ≈ 1.1초 → 슬로모션으로 약 2.2초)
+  maxDetachPerStep: 90, // 한 물리 스텝에 분리하는 조각 상한
+  removalsPerStep: 30, // 숨긴 조각의 물리 바디를 한 스텝에 지우는 수 (Rapier 제거가 비싸서 나눈다)
+  maxPhysics: 600, // 실제 물리 dynamic으로 떨어뜨리는 조각 수 (부피 큰 순)
+  maxDynamicTotal: 1000, // 동시 dynamic 상한 (PERF.md 기준)
+  pushSpeed: 4, // m/s: 물리 조각에 주는 바깥 방향 속도
+  // GPU 파편 (물리 대신)
+  particleMax: 9000,
+  particleLifeSec: 4.5,
+  burstSpeed: 9, // m/s: 바깥으로 튀는 속도 (× 0.3~1)
+  burstUp: 4, // m/s: 위로 더하는 속도
+  dustPuffsPerFloor: 6,
+  // 3) 슬로모션 + 시네마틱 카메라
+  slowMotion: 0.5,
+  cinematicRadius: 42,
+  cinematicHeight: 18,
+  cinematicSpeed: 0.35, // rad/s
+  cinematicZoomPerSec: 0.08,
+  // 4) 마무리
+  outroSec: 1.2, // 실제 시간: 웨이브가 끝나고 결과 화면까지
+  // 보상
+  completionBonusFraction: 0.3, // 완료 보너스 = 건물 전체 가치 × 이 값 (7-3 주문 보상 자리)
+} as const;
+
 /** 포인트 라이트 풀 (fx/LightPool.ts): 개수가 바뀌면 모든 재질 셰이더가 다시 컴파일되므로 고정 */
 export const LIGHT_POOL = {
   size: 5,
@@ -399,8 +551,9 @@ export const STRUCTURE = {
   jointFactor: 0.5, // 부재 사이 이음매는 부재 안보다 약하다
   // 멀쩡한 건물에서 계산한 하중 × intactSafety 보다는 항상 강하게: 자중으로는 무너지지 않는다.
   // 기둥이 빠져 하중이 이 배수 넘게 몰리는 엣지부터 끊긴다.
-  intactSafety: 1.6,
-  failureTime: 0.5, // 과부하율 2배(하중 = 강도 × 2)인 엣지가 끊기기까지 걸리는 시간 (s)
+  intactSafety: 2.0,
+  failureTime: 1.0, // 과부하율이 tolerance보다 1 큰 엣지가 끊기기까지 걸리는 시간 (s)
+  overloadTolerance: 1.2, // 이 과부하율까지는 손상이 쌓이지 않는다 (가벼운 과부하는 버팀)
   // 엣지가 끊길 때마다 지지/하중을 다시 계산하면(≈3ms) 붕괴 중 매 스텝 돌게 된다 → 이 간격으로 묶는다.
   // 폭발 직후는 force로 즉시 계산.
   solveIntervalSec: 0.1,
@@ -418,8 +571,9 @@ export const STRUCTURE = {
   minChunkFragments: 3, // 분해 후 이보다 작은 덩어리는 개별 조각으로
   // 연쇄: 움직이는 조각이 서 있는 조각에 부딪힐 때 운동에너지(J) >
   // chainJoulesPerKg × 맞은 조각이 버티는 엣지 강도 합(kg) 이면 맞은 조각이 떨어져 나간다
-  chainJoulesPerKg: 0.5,
+  chainJoulesPerKg: 1.0,
   chainMinSpeed: 4, // 이보다 느린 충돌은 검사하지 않는다 (m/s)
+  chainMinMass: 40, // kg: 이보다 가벼운 잔해(유리 파편·작은 조각)는 연쇄 파괴를 일으키지 않는다
   wakeMargin: 1, // 덩어리가 떨어질 때 그 AABB + 이 여유 안의 굳은 잔해를 다시 깨운다 (m)
   // 폭발 반경 × rubbleRange 안에서 처음 연결 면적의 이 비율도 안 남은 조각은 완전히 떼어낸다
   // (같은 곳을 여러 번 쏘면 거의 다 부서진 잔재가 매달려 다음 포탄을 막지 않게)

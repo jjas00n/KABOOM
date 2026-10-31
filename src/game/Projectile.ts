@@ -112,7 +112,7 @@ export class Projectile implements ChaseTarget {
         .setCcdEnabled(true),
       RAPIER.ColliderDesc.ball(r)
         .setDensity(density)
-        .setCollisionGroups(PROJECTILE_GROUPS) // 잔해는 뚫고 지나간다
+        .setCollisionGroups(PROJECTILE_GROUPS) // 움직이는 잔해는 뚫고 지나간다
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       this.mesh,
     );
@@ -150,7 +150,7 @@ export class Projectile implements ChaseTarget {
       maxDistance + this.spec.radius,
       true,
       undefined,
-      PROJECTILE_GROUPS, // 포탄이 실제로 부딪히는 것만 (잔해 제외)
+      PROJECTILE_GROUPS, // 포탄이 실제로 부딪히는 것만 (움직이는 잔해 제외)
       undefined,
       body.rigidBody,
     );

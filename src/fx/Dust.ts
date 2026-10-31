@@ -174,6 +174,15 @@ export class Dust {
     }
   }
 
+  /** 작은 돌가루 한 줌 (내구도로 버틴 타격 지점) */
+  puff(point: Vec3Like, size: number): void {
+    for (let i = 0; i < 2; i++) {
+      randomDirection(direction).multiplyScalar(0.8);
+      direction.y = Math.abs(direction.y);
+      this.emit(point.x, point.y, point.z, direction, DUST.groundLifeSec * 0.5, size);
+    }
+  }
+
   /** time: 물리 시간 (hit-stop·슬로모션을 따른다) */
   update(time: number): void {
     this.time = time;

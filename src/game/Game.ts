@@ -8,6 +8,9 @@
 //   IMPACT          대포: 관통 폭발(+킬캠), 파이어볼: 화염 폭발 + 화재. hit-stop + 흔들림
 //   SPECTATE        충돌 지점 자동 회전 → 자유 관람 (화재면 불 중심을 따라 줌아웃).
 //                   [Cannon]/[Wizard] 재발사 / [Back] 처음 화면 / [Reset] 건물 재생성
+//   FINALE          파괴율이 임계값에 처음 닿으면 (IMPACT·SPECTATE 중, 건물당 1회) 남은 건물을 한꺼번에.
+//                   정산 + 'DEMOLISHED!' + 붕괴 웨이브 + 시네마틱 카메라 (FinaleDirector). 클릭/Space 스킵
+//   RESULT          이번 건물 수익·발사 수·시간·최대 연쇄. [Next order] → 새 건물 (IDLE)
 import { Vector3, type PointLight } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AimCam } from '../camera/AimCam';
@@ -15,22 +18,41 @@ import { CameraRig, type CameraPose } from '../camera/CameraRig';
 import { ChaseCam } from '../camera/ChaseCam';
 import { CutsceneCam } from '../camera/CutsceneCam';
 import { SpectateCam } from '../camera/SpectateCam';
-import { CAMERA, CANNON, FIRE, FIREBALL, HIT_STOP, PROJECTILE, SANDBOX, XRAY } from '../config';
+import {
+  CAMERA,
+  CANNON,
+  DAMAGE_VISUAL,
+  ECONOMY,
+  FINALE,
+  FIRE,
+  FIREBALL,
+  HIT_STOP,
+  PROJECTILE,
+  SANDBOX,
+  XRAY,
+} from '../config';
 import type { Assets } from '../core/Assets';
 import type { Renderer } from '../core/Renderer';
 import { FireballVisual } from '../fx/FireballVisual';
 import type { PostFX } from '../fx/PostFX';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import { Stage } from '../sandbox/Stage';
+import { Completion } from '../economy/Completion';
+import { Economy } from '../economy/Economy';
+import { MATERIAL } from '../fracture/Fragment';
+import { MoneyPopups } from '../fx/MoneyPopups';
+import { EconomyHud } from '../ui/EconomyHud';
 import { HUD } from '../ui/HUD';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
 import { muzzleSpeed } from './ballistics';
 import { penetrationBlasts, penetrationDepth, type Blast } from './penetration';
 import { BuildingSite } from './BuildingSite';
 import { Cannon } from './Cannon';
+import { FinaleDirector } from './FinaleDirector';
 import { FIREBALL_SPEC } from './fireball';
 import type { Launcher, LauncherId } from './Launcher';
 import { Projectile, type ProjectileHit } from './Projectile';
+import { RunStats } from './RunStats';
 import { GameState, StateMachine } from './StateMachine';
 import { TrajectoryLine } from './TrajectoryLine';
 import { Wizard } from './Wizard';
@@ -94,6 +116,19 @@ export class Game {
   private readonly flightVelocity = new Vector3();
 
   private readonly fireballVisual: FireballVisual;
+  /** 파편 = 돈: 지갑·배율·건물 장부 (건물이 바뀌어도 지갑은 유지) */
+  readonly economy = new Economy();
+  /** 성능 측정: 이번 프레임 경제(지급 + 팝업)에 쓴 시간 (ms) */
+  readonly economyStats = { ms: 0 };
+  private readonly popups: MoneyPopups;
+  private readonly ecoHud: EconomyHud;
+  /** 완파 판정 (건물당 1회) */
+  readonly completion = new Completion();
+  /** 결과 화면용 통계 */
+  readonly runStats = new RunStats();
+  private readonly finale: FinaleDirector;
+  /** 디버그 채우기 중 (연쇄 통계에서 뺀다) */
+  private filling = false;
   /** 파이어볼을 따라다니는 라이트 (풀에서 빌림) */
   private fireballLight: PointLight | null = null;
   /** 충전 남은 시간 (s). 음수면 충전 중 아님 */
@@ -143,6 +178,26 @@ export class Game {
     this.orbitCam = new SpectateCam(this.orbit);
     this.aimCam = new AimCam(cannon);
     this.killCam = new XRayKillCam(scene, this.rig, time, this.projectiles.cannon, this.postfx);
+    this.popups = new MoneyPopups(camera);
+    this.ecoHud = new EconomyHud();
+    this.economy.onPayout = (x, y, z, amount, rare, source) => {
+      this.popups.add(x, y, z, amount, rare);
+      if (source === 'fragments' && !this.filling) this.runStats.released(1);
+    };
+    this.finale = new FinaleDirector({
+      site: this.site,
+      physics,
+      economy: this.economy,
+      time,
+      rig: this.rig,
+      camera,
+      postfx: this.postfx,
+      orbit: this.orbit,
+      orbitCam: this.orbitCam,
+      popups: this.popups,
+      onDone: () => this.fsm.transition(GameState.RESULT),
+      onNext: () => this.nextOrder(),
+    });
     this.hud = new HUD(
       (id) => this.requestLauncher(id),
       () => this.requestIdle(),
@@ -176,6 +231,7 @@ export class Game {
   /** 고정 timestep마다 (물리 스텝 직후) */
   step(dt: number): void {
     this.site.step(dt); // 여기서 충돌 이벤트가 처리되며 onCollision이 불린다
+    this.finale.step(dt);
     this.projectile.step(dt);
     this.stepPenetration(dt);
     if (!this.fsm.is(GameState.PROJECTILE_CAM)) return;
@@ -199,6 +255,7 @@ export class Game {
   /** 렌더 프레임마다 (실제 경과 시간) */
   update(dt: number): void {
     this.clock += dt;
+    this.runStats.update(dt);
     switch (this.fsm.state) {
       case GameState.CUTSCENE:
         if (this.cutscene?.done) this.fsm.transition(GameState.AIMING);
@@ -224,6 +281,20 @@ export class Game {
     this.launchers.wizard.update(dt);
     this.updateFireball(dt);
     this.site.update(dt);
+    this.economy.update(dt * this.time.timeScale); // 파괴율은 물리 시간 기준 갱신 주기
+    this.completion.update(this.economy.destructionRate);
+    // 비행 중에 닿았으면 충돌·관람이 될 때까지 기다렸다가 시작한다
+    if (
+      this.completion.ready &&
+      this.fsm.is(GameState.IMPACT, GameState.SPECTATE) &&
+      this.completion.consume()
+    ) {
+      this.fsm.transition(GameState.FINALE);
+    }
+    this.finale.update(dt);
+    this.popups.update(dt);
+    this.ecoHud.update(dt, this.economy);
+    this.economyStats.ms = this.economy.consumeCostMs() + this.popups.lastMs;
     this.stage.update(dt, this.site.bounds);
     this.rig.update(dt);
   }
@@ -273,6 +344,17 @@ export class Game {
       });
       this.rig.setController(this.orbitCam);
     });
+    fsm.onEnter(GameState.FINALE, () => this.enterFinale());
+    fsm.onEnter(GameState.RESULT, () => {
+      const w = this.economy.wallet;
+      this.finale.showResult({
+        income: { ...w.building },
+        total: w.buildingTotal,
+        shots: { ...this.runStats.shots },
+        seconds: this.runStats.elapsed,
+        maxChain: this.runStats.maxChain,
+      });
+    });
     fsm.onChange((_from, to) => this.hud.setState(to, this.ready));
     this.hud.setState(fsm.state, this.ready);
   }
@@ -313,6 +395,7 @@ export class Game {
 
   private fire(): void {
     const launcher = this.launcher;
+    this.runStats.fired(launcher.id);
     this.aimLaunch(launcher);
     this.pendingHit = null;
     this.projectile.launch(this.muzzle, this.launchVelocity);
@@ -377,7 +460,14 @@ export class Game {
     }
     this.fireSpectate = false;
     this.blasts = this.hitBuilding
-      ? penetrationBlasts(hit.point, hit.direction, hit.energy, hit.speed)
+      ? penetrationBlasts(
+          hit.point,
+          hit.direction,
+          hit.energy,
+          hit.speed,
+          0,
+          this.resistanceAt(hit),
+        )
       : [{ point: hit.point, energy: hit.energy, delay: 0 }];
     this.nextBlast = 0;
     this.drillTime = 0;
@@ -398,6 +488,72 @@ export class Game {
     }
     this.rig.shake.add(CAMERA.impactTrauma);
     if (!this.killCam.active) this.postfx.pulse();
+  }
+
+  /** 완파 피날레: 진행 중인 발사·관통·킬캠·충전을 정리하고 연출 시작 */
+  private enterFinale(): void {
+    this.blasts = [];
+    this.nextBlast = 0;
+    this.pendingHit = null;
+    this.projectiles.cannon.remove();
+    this.projectiles.wizard.remove();
+    this.killCam.stop();
+    this.releaseFireballLight();
+    this.chargeLeft = -1;
+    this.trajectory.visible = false;
+    this.runStats.finish();
+    this.finale.start(this.buildingCenter);
+  }
+
+  /** 결과 화면 '다음 주문': 다른 seed로 새 건물 (7-3에서 주문 게시판으로) */
+  private nextOrder(): void {
+    if (!this.fsm.is(GameState.RESULT)) return;
+    this.site.settings.seed += 1;
+    this.hideLaunchers();
+    this.fsm.transition(GameState.IDLE);
+    this.rebuild();
+  }
+
+  /**
+   * 디버그: 서 있는 조각을 위에서부터 숨기며(물리 없이) 정상 지급 경로로 처리해 파괴율을 임계값까지 채운다.
+   * 다음 파괴율 갱신에서 피날레가 발동한다 (IMPACT·SPECTATE 중일 때).
+   */
+  fillToThreshold(): void {
+    const d = this.site.destruction;
+    const ledger = this.economy.ledger;
+    if (!d || !ledger) return;
+    const g = d.graph;
+    const p = d.positions;
+    const order: number[] = [];
+    for (let i = 0; i < g.nodeCount; i++) {
+      if (g.attached[i] && !g.anchor[i] && ledger.counted[i]) order.push(i);
+    }
+    order.sort((a, b) => p[b * 3 + 1]! - p[a * 3 + 1]!);
+    this.filling = true;
+    for (const i of order) {
+      if (ledger.destructionRate >= FINALE.threshold) break;
+      if (!g.detach(i)) continue;
+      const chunk = d.fragments.chunkOf[i];
+      if (chunk) d.forget(chunk.body);
+      this.economy.release([i]);
+    }
+    this.filling = false;
+    d.solver.markDirty();
+  }
+
+  /** 디버그: 임계값과 무관하게 피날레 (IMPACT·SPECTATE 중이면 바로, 아니면 그때까지 대기) */
+  triggerFinale(): void {
+    this.completion.force();
+  }
+
+  /** 관통 저항: 맞은 곳과 그 안쪽이 이미 부서져 있을수록 작다 (더 깊이 파고든다) */
+  private resistanceAt(hit: ProjectileHit): number {
+    const d = this.site.destruction;
+    if (!d) return 1;
+    const r = DAMAGE_VISUAL.penetrationSampleRadius;
+    const probe = this.blastPoint.copy(hit.point).addScaledVector(hit.direction, r);
+    const damage = (d.damageNear(hit.point, r) + d.damageNear(probe, r)) / 2;
+    return 1 - DAMAGE_VISUAL.penetrationDamageFactor * damage;
   }
 
   /** 파이어볼: 관통·킬캠 없이 화염 폭발 + 화재, 일반 hit-stop */
@@ -501,6 +657,9 @@ export class Game {
     this.ready = false;
     this.hideLaunchers();
     this.hud.setState(this.fsm.state, this.ready);
+    this.economy.detach();
+    this.popups.clear();
+    this.finale.reset();
     void this.site.reset().then((ok) => {
       if (!ok) return;
       const { footprint, height } = this.site;
@@ -512,10 +671,34 @@ export class Game {
         );
       }
       this.site.destruction!.onCollisionStarted = (a, b) => this.onCollision(a, b);
+      this.attachEconomy();
+      this.completion.arm();
+      this.runStats.start();
       this.ready = true;
       if (this.fsm.is(GameState.IDLE)) this.enterIdle(); // 새 건물 중심으로
       this.hud.setState(this.fsm.state, this.ready);
     });
+  }
+
+  /** 새 건물의 장부를 연다. 희귀 파편(켜져 있으면)은 금빛으로 */
+  private attachEconomy(): void {
+    const d = this.site.destruction!;
+    const frags = d.fragments.fragments;
+    const ledger = this.economy.attach(
+      d,
+      {
+        count: d.graph.nodeCount,
+        mass: d.graph.mass,
+        kind: (i) => this.site.kindOf(i),
+        material: (i) => (frags[i]!.material === MATERIAL.glass ? 'glass' : 'concrete'),
+        durability: (i) => d.durability.max[i]!,
+      },
+      this.site.settings.seed,
+    );
+    const gold = ECONOMY.rareColor;
+    for (let i = 0; i < ledger.rare.length; i++) {
+      if (ledger.rare[i]) d.fragments.meshes.setBaseColor(i, gold.r, gold.g, gold.b);
+    }
   }
 
   // ── 조준 ───────────────────────────────────────────────
@@ -609,11 +792,12 @@ export class Game {
     window.addEventListener('blur', () => this.keys.clear());
   }
 
-  /** 클릭 / Space: 컷신 스킵 또는 발사 */
+  /** 클릭 / Space: 컷신·킬캠·피날레 스킵 또는 발사 */
   private onPrimaryAction(): void {
     if (this.killCam.active) this.killCam.skip();
     else if (this.fsm.is(GameState.CUTSCENE)) this.skipCutscene();
     else if (this.fsm.is(GameState.AIMING) && this.chargeLeft < 0) this.pullTrigger();
+    else if (this.fsm.is(GameState.FINALE)) this.finale.skip();
   }
 }
 

@@ -2,19 +2,33 @@
 // 외면: 부재 기준 박스 투영 UV (Fragment.ts). 단면: 조각 원래 자리 좌표(rest)로 트라이플래너.
 // 인스턴스 색(RGBA) = 조각별 기본색(tint). 화재가 RGB를 그을음으로 어둡게 하고, 알파로 불씨 세기를 넘긴다
 // (알파 = 1 - 불씨). 불투명 재질이라 알파는 원래 안 쓰이고, 엑스레이(투명) 중에는 불씨 해석을 끈다.
+// 손상 외관: 배치마다 인스턴스 id로 읽는 DataTexture(R = damage, G = 매달림, B = 흔들림 위상).
+//   외부면은 폴리곤 중심 팬으로 다시 삼각화하고 rim 속성(경계 1, 중심 0)을 붙여 경계에 균열을 그린다.
+//   재질·드로우콜은 늘지 않는다.
 import {
   BatchedMesh,
   BufferAttribute,
   BufferGeometry,
   Color,
+  DataTexture,
+  FloatType,
   Matrix4,
+  RGBAFormat,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
   Vector2,
   Vector4,
   type Material,
 } from 'three';
-import { CONCRETE, FIRE, GLASS, TEXTURES, type GlassMode } from '../config';
+import {
+  CONCRETE,
+  DAMAGE_VISUAL,
+  DURABILITY,
+  FIRE,
+  GLASS,
+  TEXTURES,
+  type GlassMode,
+} from '../config';
 import { NOISE_GLSL } from '../fx/noise';
 import type { Assets } from '../core/Assets';
 import { createRng } from './seeds';
@@ -25,8 +39,26 @@ export interface FragmentMaterials {
   exterior: Material;
   interior: Material;
   glass: MeshPhysicalMaterial;
-  /** 불씨 깜빡임 시계 (s). 매 프레임 갱신 */
+  /** 불씨 깜빡임·흔들림 시계 (s). 매 프레임 갱신 */
   fireTime: { value: number };
+  /** 손상 데이터 텍스처 (재질별, FragmentMeshes가 채운다) */
+  damageMaps: { exterior: { value: DataTexture }; interior: { value: DataTexture } };
+  /** 손상 외관 효과 켬(1)/끔(0) */
+  damageOn: { value: number };
+  /** 피날레 진동 진폭 (m, 렌더 전용) */
+  quake: { value: number };
+  /** 피날레 균열 확산: 모든 조각 균열 하한 0~1 (조각별 텍스처 갱신 없이) */
+  crackFloor: { value: number };
+}
+
+/** 외부면 정점 속성: 폴리곤 경계 1, 중심 0 (균열 위치) */
+export const RIM_ATTRIBUTE = 'rim';
+
+/** 빈 손상 텍스처 (건물이 없을 때) */
+function emptyDamageMap(): DataTexture {
+  const t = new DataTexture(new Float32Array(4), 1, 1, RGBAFormat, FloatType);
+  t.needsUpdate = true;
+  return t;
 }
 
 /** 단면 지오메트리의 원래 자리 월드 좌표 속성 (트라이플래너 입력) */
@@ -66,8 +98,15 @@ export function createFragmentMaterials(
     makeTriplanar(interior);
   }
   const fireTime = { value: 0 };
-  addEmberGlow(exterior, fireTime);
-  addEmberGlow(interior, fireTime);
+  const damageMaps = {
+    exterior: { value: emptyDamageMap() },
+    interior: { value: emptyDamageMap() },
+  };
+  const damageOn = { value: DAMAGE_VISUAL.enabled ? 1 : 0 };
+  const quake = { value: 0 };
+  const crackFloor = { value: 0 };
+  addSurfaceFx(exterior, fireTime, damageMaps.exterior, damageOn, quake, crackFloor);
+  addSurfaceFx(interior, fireTime, damageMaps.interior, damageOn, quake, crackFloor);
   const glass = new MeshPhysicalMaterial({
     color: GLASS.color,
     roughness: GLASS.roughness,
@@ -75,7 +114,7 @@ export function createFragmentMaterials(
     ior: GLASS.ior,
   });
   setGlassMode(glass, glassMode);
-  return { exterior, interior, glass, fireTime };
+  return { exterior, interior, glass, fireTime, damageMaps, damageOn, quake, crackFloor };
 }
 
 /**
@@ -162,15 +201,84 @@ function makeTriplanar(material: MeshStandardMaterial): void {
   material.customProgramCacheKey = () => 'triplanar';
 }
 
-const EMBER_VERTEX_PARS = /* glsl */ `
-varying vec3 vEmberPos;`;
+const FX_VERTEX_PARS = /* glsl */ `
+uniform float uFireTime;
+uniform highp sampler2D uDamageMap;
+uniform float uDamageOn;
+uniform float uSwayAmp;
+uniform float uSwayHz;
+uniform float uQuake;
+attribute float ${RIM_ATTRIBUTE};
+varying vec3 vEmberPos;
+varying float vRim;
+varying vec4 vDamage;`;
+
+// 손상 데이터 읽기 + 매달린 조각 흔들림 (아주 작게: 렌더↔콜라이더 1cm 불변 조건 안)
+const FX_VERTEX = /* glsl */ `
+vEmberPos = position;
+vRim = ${RIM_ATTRIBUTE};
+vDamage = vec4( 0.0 );
+#ifdef USE_BATCHING
+{
+  int kId = int( getIndirectIndex( gl_DrawID ) );
+  int kSize = textureSize( uDamageMap, 0 ).x;
+  vDamage = texelFetch( uDamageMap, ivec2( kId % kSize, kId / kSize ), 0 ) * uDamageOn;
+}
+#endif
+{
+  float kPhase = vDamage.b * 6.2832 + uFireTime * uSwayHz * 6.2832;
+  transformed += vec3( sin( kPhase ), 0.0, cos( kPhase * 0.77 ) ) * uSwayAmp * vDamage.g;
+  // 피날레 진동: 조각마다 다른 위상으로 빠르게 떨린다 (렌더 전용)
+  float kQ = uFireTime * 47.0 + vDamage.b * 31.0;
+  transformed += vec3( sin( kQ ), sin( kQ * 1.31 + 1.7 ) * 0.5, cos( kQ * 0.83 ) ) * uQuake;
+}`;
 
 const EMBER_FRAGMENT_PARS = /* glsl */ `
 uniform float uFireTime;
 uniform vec3 uCrackColor;
 uniform float uEmberScale;
+uniform float uDamageCrackWidth;
+uniform float uDamageCrackStrength;
+uniform float uDamageNoise;
+uniform float uDamageGrime;
+uniform float uDamageEdgeNormal;
+uniform float uCrackFloor;
+uniform float uFlashSec;
+uniform float uFlashBrightness;
 varying vec3 vEmberPos;
+varying float vRim;
+varying vec4 vDamage;
 ${NOISE_GLSL}`;
+
+// 균열(경계 쪽 어두운 선) + 먼지·그을음 톤.
+// 가벼운 손상엔 균열이 없고, damage가 클수록 굵어진다. 굵기를 경계를 따라 노이즈로 바꿔(점선처럼 끊지 않고)
+// 들쭉날쭉한 깨진 선처럼 보이게 한다.
+const DAMAGE_COLOR = /* glsl */ `
+float kDamage = max( vDamage.r, uCrackFloor );
+if ( kDamage > 0.001 ) {
+  float kAmount = smoothstep( 0.15, 1.0, kDamage );
+  float kN = kFbm( vEmberPos * uDamageNoise );
+  float kW = uDamageCrackWidth * kAmount * ( 0.15 + 1.2 * kN * kN );
+  float kEdge = 1.0 - vRim; // 경계 0 → 중심 1
+  float kCrack = kAmount * ( 1.0 - smoothstep( kW * 0.35, kW, kEdge ) );
+  diffuseColor.rgb *= 1.0 - uDamageCrackStrength * kCrack;
+  float kGrime = kDamage * uDamageGrime * ( 0.5 + 0.5 * kNoise( vEmberPos * 1.7 + 11.0 ) );
+  diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * vec3( 0.5, 0.47, 0.43 ), kGrime );
+}`;
+
+// 경계 근처 노멀을 흔들어 모서리가 부서진 느낌
+const DAMAGE_NORMAL = /* glsl */ `
+// 내구도로 버틴 타격: 맞은 순간(vDamage.a = 피격 시각) 잠깐 밝아진다
+if ( vDamage.a > 0.0 ) {
+  float kSince = uFireTime - vDamage.a;
+  float kFlash = kSince >= 0.0 ? 1.0 - smoothstep( 0.0, uFlashSec, kSince ) : 0.0;
+  totalEmissiveRadiance += diffuseColor.rgb * uFlashBrightness * kFlash;
+}
+if ( kDamage > 0.001 ) {
+  vec3 kQ = vEmberPos * uDamageNoise * 0.6;
+  vec3 kJitter = vec3( kNoise( kQ ), kNoise( kQ + 3.7 ), kNoise( kQ + 7.1 ) ) - 0.5;
+  normal = normalize( normal + kJitter * uDamageEdgeNormal * kDamage * smoothstep( 0.5, 1.0, vRim ) );
+}`;
 
 // 불씨: 갈라진 틈 무늬(노이즈 줄무늬) × 깜빡임. 불투명일 때만 (엑스레이 중엔 알파가 투명도)
 const EMBER_FRAGMENT = /* glsl */ `
@@ -187,27 +295,59 @@ const EMBER_FRAGMENT = /* glsl */ `
 }
 #endif`;
 
-/** 외벽·단면 재질에 불씨 emissive를 덧붙인다 (기존 onBeforeCompile 뒤에 이어서) */
-function addEmberGlow(material: MeshStandardMaterial, fireTime: { value: number }): void {
+/**
+ * 외벽·단면 재질에 표면 효과를 덧붙인다 (기존 onBeforeCompile 뒤에 이어서):
+ * 불씨 emissive, 손상 균열·열화·노멀, 매달린 조각 흔들림.
+ * 단면은 트라이플래너가 map/normal 청크를 바꿔 치우므로 그 뒤 청크(color, emissivemap)에 붙인다.
+ */
+function addSurfaceFx(
+  material: MeshStandardMaterial,
+  fireTime: { value: number },
+  damageMap: { value: DataTexture },
+  damageOn: { value: number },
+  quake: { value: number },
+  crackFloor: { value: number },
+): void {
   const previous = material.onBeforeCompile.bind(material);
   const previousKey = material.customProgramCacheKey.bind(material);
   const crack = new Color(FIRE.crackColor).multiplyScalar(FIRE.emberGlow);
   material.onBeforeCompile = (shader, renderer) => {
     previous(shader, renderer);
-    shader.uniforms.uFireTime = fireTime;
-    shader.uniforms.uCrackColor = { value: crack };
-    shader.uniforms.uEmberScale = { value: FIRE.emberNoiseScale };
+    const u = shader.uniforms;
+    u.uFireTime = fireTime;
+    u.uCrackColor = { value: crack };
+    u.uEmberScale = { value: FIRE.emberNoiseScale };
+    u.uDamageMap = damageMap;
+    u.uDamageOn = damageOn;
+    u.uQuake = quake;
+    u.uCrackFloor = crackFloor;
+    u.uSwayAmp = { value: DAMAGE_VISUAL.swayAmplitude };
+    u.uSwayHz = { value: DAMAGE_VISUAL.swayHz };
+    u.uDamageCrackWidth = { value: DAMAGE_VISUAL.crackWidth };
+    u.uDamageCrackStrength = { value: DAMAGE_VISUAL.crackStrength };
+    u.uDamageNoise = { value: DAMAGE_VISUAL.crackNoiseScale };
+    u.uDamageGrime = { value: DAMAGE_VISUAL.grimeStrength };
+    u.uDamageEdgeNormal = { value: DAMAGE_VISUAL.edgeNormalNoise };
+    u.uFlashSec = { value: DURABILITY.flashSec };
+    u.uFlashBrightness = { value: DURABILITY.flashBrightness };
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>${EMBER_VERTEX_PARS}`)
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvEmberPos = position;');
+      .replace('#include <common>', `#include <common>${FX_VERTEX_PARS}`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>${FX_VERTEX}`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>${EMBER_FRAGMENT_PARS}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>${DAMAGE_COLOR}`)
       .replace(
         '#include <emissivemap_fragment>',
-        `#include <emissivemap_fragment>${EMBER_FRAGMENT}`,
+        `${DAMAGE_NORMAL}\n#include <emissivemap_fragment>${EMBER_FRAGMENT}`,
       );
   };
-  material.customProgramCacheKey = () => `${previousKey()}|ember`;
+  material.customProgramCacheKey = () => `${previousKey()}|fx`;
+}
+
+interface DamageBatch {
+  texture: DataTexture;
+  data: Float32Array;
+  dirty: boolean;
 }
 
 type Part = BufferGeometry | null;
@@ -222,8 +362,14 @@ export class FragmentMeshes {
   readonly slots: BatchSlot[][];
   /** 조각별 기본색 RGBA (그을음·불씨). 디버그 색칠·엑스레이가 끝나면 이 색으로 돌아간다 */
   readonly tint: Float32Array;
+  /** 조각별 바탕색 RGB (희귀 파편 금빛 등). tint에 곱해져 칠해진다 */
+  readonly base: Float32Array;
   /** 디버그 색칠 등 다른 색이 덮고 있으면 true: setTint는 저장만 하고 칠하지 않는다 */
   overlay = false;
+  /** 배치별 손상 텍스처 (외벽·단면만, 유리는 없음) */
+  private readonly damageBatches = new Map<BatchedMesh, DamageBatch>();
+  /** 누적 손상 텍스처 업로드 횟수 (성능 측정) */
+  damageUploads = 0;
 
   constructor(frags: readonly Fragment[], materials: FragmentMaterials) {
     const exterior: Part[] = [];
@@ -244,6 +390,7 @@ export class FragmentMeshes {
 
     this.slots = frags.map(() => []);
     this.tint = new Float32Array(frags.length * 4).fill(1);
+    this.base = new Float32Array(frags.length * 3).fill(1);
     const matrix = new Matrix4();
     for (const [parts, material] of [
       [exterior, materials.exterior],
@@ -253,6 +400,21 @@ export class FragmentMeshes {
       const batch = createBatch(parts, material);
       if (!batch) continue;
       this.batches.push(batch.mesh);
+      const holder =
+        material === materials.exterior
+          ? materials.damageMaps.exterior
+          : material === materials.interior
+            ? materials.damageMaps.interior
+            : null;
+      if (holder) {
+        const size = Math.max(1, Math.ceil(Math.sqrt(batch.mesh.maxInstanceCount)));
+        const data = new Float32Array(size * size * 4);
+        const texture = new DataTexture(data, size, size, RGBAFormat, FloatType);
+        texture.needsUpdate = true;
+        holder.value.dispose();
+        holder.value = texture;
+        this.damageBatches.set(batch.mesh, { texture, data, dirty: false });
+      }
       frags.forEach((frag, i) => {
         const geometryId = batch.geometryIds[i]!;
         if (geometryId < 0) return; // 이 조각엔 해당 재질 면이 없다 (예: 내부 조각의 외부면)
@@ -281,21 +443,63 @@ export class FragmentMeshes {
     }
   }
 
-  /** 조각 i의 기본색. overlay 중이면 저장만 */
+  /** 조각 i의 기본색 (그을음·불씨). overlay 중이면 저장만 */
   setTint(i: number, r: number, g: number, b: number, a: number): void {
     this.tint.set([r, g, b, a], i * 4);
-    if (this.overlay) return;
-    rgba.set(r, g, b, a);
-    for (const { batch, id } of this.slots[i]!) batch.setColorAt(id, rgba);
+    if (!this.overlay) this.paint(i);
+  }
+
+  /** 조각 i의 바탕색 (희귀 파편 금빛 등). overlay 중이면 저장만 */
+  setBaseColor(i: number, r: number, g: number, b: number): void {
+    this.base.set([r, g, b], i * 3);
+    if (!this.overlay) this.paint(i);
   }
 
   /** 모든 조각을 기본색으로 다시 칠한다 */
   restoreTints(): void {
+    for (let i = 0; i < this.slots.length; i++) this.paint(i);
+  }
+
+  /** 인스턴스 색 = 바탕색 × tint (알파는 tint 그대로: 불씨) */
+  private paint(i: number): void {
     const t = this.tint;
-    this.slots.forEach((slots, i) => {
-      rgba.set(t[i * 4]!, t[i * 4 + 1]!, t[i * 4 + 2]!, t[i * 4 + 3]!);
-      for (const { batch, id } of slots) batch.setColorAt(id, rgba);
-    });
+    const c = this.base;
+    rgba.set(
+      t[i * 4]! * c[i * 3]!,
+      t[i * 4 + 1]! * c[i * 3 + 1]!,
+      t[i * 4 + 2]! * c[i * 3 + 2]!,
+      t[i * 4 + 3]!,
+    );
+    for (const { batch, id } of this.slots[i]!) batch.setColorAt(id, rgba);
+  }
+
+  /**
+   * 조각 i의 손상 외관 값: damage 0~1, 매달림 0~1, 흔들림 위상 0~1, 마지막 피격 시각(번쩍임, 0 = 없음).
+   * flushDamage 전까지 GPU에 안 올라간다
+   */
+  setDamage(i: number, damage: number, hanging: number, phase: number, hitTime = 0): void {
+    for (const { batch, id } of this.slots[i]!) {
+      const b = this.damageBatches.get(batch);
+      if (!b) continue;
+      b.data[id * 4] = damage;
+      b.data[id * 4 + 1] = hanging;
+      b.data[id * 4 + 2] = phase;
+      b.data[id * 4 + 3] = hitTime;
+      b.dirty = true;
+    }
+  }
+
+  /** 바뀐 손상 텍스처를 GPU로 (프레임당 한 번). 반환: 올린 텍스처 수 */
+  flushDamage(): number {
+    let n = 0;
+    for (const b of this.damageBatches.values()) {
+      if (!b.dirty) continue;
+      b.dirty = false;
+      b.texture.needsUpdate = true;
+      n++;
+    }
+    this.damageUploads += n;
+    return n;
   }
 
   /** 기본색을 전부 흰색(원래 재질 색)으로 */
@@ -305,6 +509,8 @@ export class FragmentMeshes {
   }
 
   dispose(): void {
+    // 텍스처는 재질 uniform이 쥐고 있어 다음 건물이 바꿔 끼울 때 정리한다
+    this.damageBatches.clear();
     for (const batch of this.batches) {
       batch.removeFromParent();
       batch.dispose();
@@ -355,7 +561,9 @@ function splitByMaterial(frag: Fragment): { exterior: Part; interior: Part } {
   return {
     exterior:
       exteriorIndexCount > 0
-        ? makeGeometry(frag, 0, exteriorVertexCount, indices.subarray(0, exteriorIndexCount), 0)
+        ? withRim(
+            makeGeometry(frag, 0, exteriorVertexCount, indices.subarray(0, exteriorIndexCount), 0),
+          )
         : null,
     interior:
       exteriorIndexCount < indices.length
@@ -401,6 +609,69 @@ function makeGeometry(
     ),
   );
   return g;
+}
+
+/**
+ * 외부면을 폴리곤 중심 팬으로 다시 삼각화하고 rim 속성(경계 정점 1, 중심 0)을 붙인다.
+ * buildFragment는 폴리곤마다 정점을 연속으로 두고 첫 정점 기준 팬(v0, vk, vk+1)으로 삼각화하므로
+ * 같은 첫 정점을 가진 삼각형들이 한 폴리곤이다. 폴리곤 하나에 정점이 1개(중심) 늘어난다.
+ */
+export function withRim(g: BufferGeometry): BufferGeometry {
+  const index = g.getIndex()!.array;
+  const pos = g.getAttribute('position').array;
+  const nor = g.getAttribute('normal').array;
+  const uv = g.getAttribute('uv').array;
+  const polys: { start: number; count: number }[] = [];
+  for (let t = 0; t < index.length; t += 3) {
+    const first = index[t]!;
+    const last = polys[polys.length - 1];
+    if (last && last.start === first) last.count++;
+    else polys.push({ start: first, count: 1 });
+  }
+  let vertexCount = 0;
+  let indexCount = 0;
+  for (const p of polys) {
+    vertexCount += p.count + 3; // 정점 n = 삼각형 + 2, + 중심
+    indexCount += (p.count + 2) * 3;
+  }
+  const P = new Float32Array(vertexCount * 3);
+  const N = new Float32Array(vertexCount * 3);
+  const U = new Float32Array(vertexCount * 2);
+  const R = new Float32Array(vertexCount);
+  const I = new Uint32Array(indexCount);
+  let v = 0;
+  let ii = 0;
+  for (const p of polys) {
+    const n = p.count + 2;
+    const c = v + n;
+    for (let k = 0; k < n; k++) {
+      const src = p.start + k;
+      for (let a = 0; a < 3; a++) {
+        P[(v + k) * 3 + a] = pos[src * 3 + a]!;
+        N[(v + k) * 3 + a] = nor[src * 3 + a]!;
+        P[c * 3 + a]! += pos[src * 3 + a]! / n;
+      }
+      U[(v + k) * 2] = uv[src * 2]!;
+      U[(v + k) * 2 + 1] = uv[src * 2 + 1]!;
+      U[c * 2]! += uv[src * 2]! / n;
+      U[c * 2 + 1]! += uv[src * 2 + 1]! / n;
+      R[v + k] = 1;
+      I[ii++] = c;
+      I[ii++] = v + k;
+      I[ii++] = v + ((k + 1) % n);
+    }
+    for (let a = 0; a < 3; a++) N[c * 3 + a] = nor[p.start * 3 + a]!;
+    R[c] = 0;
+    v = c + 1;
+  }
+  g.dispose();
+  const out = new BufferGeometry();
+  out.setAttribute('position', new BufferAttribute(P, 3));
+  out.setAttribute('normal', new BufferAttribute(N, 3));
+  out.setAttribute('uv', new BufferAttribute(U, 2));
+  out.setAttribute(RIM_ATTRIBUTE, new BufferAttribute(R, 1));
+  out.setIndex(new BufferAttribute(I, 1));
+  return out;
 }
 
 /** 원래 자리 월드 좌표 = 로컬 정점 + 질량중심 (워커에서 따로 보내지 않고 여기서 만든다) */

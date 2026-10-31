@@ -10,10 +10,15 @@ export interface Blast {
   delay: number;
 }
 
-/** 에너지(J)로 파고드는 깊이 (m) */
-export function penetrationDepth(energy: number): number {
-  const excess = energy - PENETRATION.minEnergy;
-  return excess > 0 ? Math.min(excess / PENETRATION.energyPerMeter, PENETRATION.maxDepth) : 0;
+/**
+ * 에너지(J)로 파고드는 깊이 (m). resistance: 저항 배율 (1 = 멀쩡한 콘크리트,
+ * 이미 부서진 곳은 작다 → 같은 에너지로 더 깊이)
+ */
+export function penetrationDepth(energy: number, resistance = 1): number {
+  const r = Math.max(resistance, 0.05);
+  const excess = energy - PENETRATION.minEnergy * r; // 부서진 곳은 뚫기 시작하는 문턱도 낮다
+  const perMeter = PENETRATION.energyPerMeter * r;
+  return excess > 0 ? Math.min(excess / perMeter, PENETRATION.maxDepth) : 0;
 }
 
 /**
@@ -29,9 +34,10 @@ export function penetrationBlasts(
   energy: number,
   speed: number,
   groundY = 0,
+  resistance = 1,
 ): Blast[] {
   const contact: Blast = { point: { x: point.x, y: point.y, z: point.z }, energy, delay: 0 };
-  const depth = penetrationDepth(energy);
+  const depth = penetrationDepth(energy, resistance);
   if (depth <= 0) return [contact];
 
   const stations: number[] = [];
