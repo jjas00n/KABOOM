@@ -124,6 +124,9 @@ export class DestructionSystem {
       onDynamic: (chunk) => this.onDynamic(chunk),
     });
     this.damage = new DamageModel(this.graph, this.positions, this.solver.edgeDamage);
+    this.damage.ignoreNeighbors = Uint8Array.from(frags, (f) =>
+      f.material === MATERIAL.glass ? 1 : 0,
+    );
   }
 
   /** 손상도를 지금 구조로 다시 계산하고, 바뀐 노드를 알리고, 느슨한 조각을 대기열에 넣는다 */
@@ -402,7 +405,10 @@ export class DestructionSystem {
     if (!g.attached[i] || g.anchor[i]) return false;
     const speed = mover.preStepVelocity.length(); // 충돌로 멈추기 전 속도
     if (speed < STRUCTURE.chainMinSpeed) return false;
-    const energy = 0.5 * mover.rigidBody.mass() * speed * speed;
+    const mass = mover.rigidBody.mass();
+    // 가벼운 잔해(유리 파편, 작은 조각)는 서 있는 조각을 떼어내지 못한다 — 유리가 연쇄로 유리를 깨지 않게
+    if (mass < STRUCTURE.chainMinMass) return false;
+    const energy = 0.5 * mass * speed * speed;
     // 이미 많이 손상된 조각은 작은 충돌에도 떨어진다
     const weak = this.damageResponse && this.damage.damage[i]! >= DAMAGE_VISUAL.chainDamage;
     if (!weak && energy <= STRUCTURE.chainJoulesPerKg * g.supportCapacity(i)) return false;

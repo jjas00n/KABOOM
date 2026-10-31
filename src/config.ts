@@ -480,7 +480,8 @@ export const STRUCTURE = {
   // 멀쩡한 건물에서 계산한 하중 × intactSafety 보다는 항상 강하게: 자중으로는 무너지지 않는다.
   // 기둥이 빠져 하중이 이 배수 넘게 몰리는 엣지부터 끊긴다.
   intactSafety: 2.0,
-  failureTime: 1.0, // 과부하율 2배(하중 = 강도 × 2)인 엣지가 끊기기까지 걸리는 시간 (s)
+  failureTime: 1.0, // 과부하율이 tolerance보다 1 큰 엣지가 끊기기까지 걸리는 시간 (s)
+  overloadTolerance: 1.2, // 이 과부하율까지는 손상이 쌓이지 않는다 (가벼운 과부하는 버팀)
   // 엣지가 끊길 때마다 지지/하중을 다시 계산하면(≈3ms) 붕괴 중 매 스텝 돌게 된다 → 이 간격으로 묶는다.
   // 폭발 직후는 force로 즉시 계산.
   solveIntervalSec: 0.1,
@@ -500,6 +501,7 @@ export const STRUCTURE = {
   // chainJoulesPerKg × 맞은 조각이 버티는 엣지 강도 합(kg) 이면 맞은 조각이 떨어져 나간다
   chainJoulesPerKg: 1.0,
   chainMinSpeed: 4, // 이보다 느린 충돌은 검사하지 않는다 (m/s)
+  chainMinMass: 40, // kg: 이보다 가벼운 잔해(유리 파편·작은 조각)는 연쇄 파괴를 일으키지 않는다
   wakeMargin: 1, // 덩어리가 떨어질 때 그 AABB + 이 여유 안의 굳은 잔해를 다시 깨운다 (m)
   // 폭발 반경 × rubbleRange 안에서 처음 연결 면적의 이 비율도 안 남은 조각은 완전히 떼어낸다
   // (같은 곳을 여러 번 쏘면 거의 다 부서진 잔재가 매달려 다음 포탄을 막지 않게)

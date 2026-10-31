@@ -7,6 +7,7 @@
 //   - 처짐: 아래쪽 지지 면적을 잃은 비율 × damage × sagMax (−y)
 //   - 기울어짐: 외장재는 건물 바깥 쪽으로 위가 기운다 (tiltMax × damage)
 // 그래프의 positions(원래 자리)는 바꾸지 않는다 — 구조 계산은 원래 자리 기준 그대로다.
+// ignoreNeighbors(유리)와의 연결은 콘크리트 조각의 손상으로 치지 않는다: 창유리가 빠져도 창틀은 멀쩡하다.
 import { Quaternion, Vector3 } from 'three';
 import type { StructureGraph } from '../building/StructureGraph';
 import { DAMAGE_VISUAL } from '../config';
@@ -42,6 +43,8 @@ export class DamageModel {
   /** 노드별 원래 아래쪽 이웃 면적 */
   private readonly belowArea: Float32Array;
   private readonly center = new Vector3();
+  /** 이 노드들(유리)과의 연결은 다른 노드의 손상 계산에서 뺀다 (자기 자신이 유리면 그대로 센다) */
+  ignoreNeighbors: Uint8Array | null = null;
 
   /**
    * positions: 노드 원래 질량중심 xyz, edgeDamage: CollapseSolver 엣지 누적손상 (없으면 0),
@@ -93,7 +96,7 @@ export class DamageModel {
       let hanging = 0;
       let sag = 0;
       if (g.attached[i]) {
-        const total = g.nodeArea[i]!;
+        let total = 0;
         let aliveArea = 0;
         let aliveEdges = 0;
         let strain = 0;
@@ -101,6 +104,8 @@ export class DamageModel {
         let lostBelow = 0;
         for (let k = g.incidentStart[i]!; k < g.incidentStart[i + 1]!; k++) {
           const e = g.incident[k]!;
+          if (this.ignored(e, i)) continue;
+          total += g.area[e]!;
           if (g.alive[e]) {
             aliveEdges++;
             aliveArea += g.area[e]!;
@@ -146,7 +151,7 @@ export class DamageModel {
     const total = g.nodeArea[i]! || 1;
     for (let k = g.incidentStart[i]!; k < g.incidentStart[i + 1]!; k++) {
       const e = g.incident[k]!;
-      if (g.alive[e]) continue;
+      if (g.alive[e] || this.ignored(e, i)) continue;
       const j = g.other(e, i);
       dir
         .set(p[i * 3]! - p[j * 3]!, p[i * 3 + 1]! - p[j * 3 + 1]!, p[i * 3 + 2]! - p[j * 3 + 2]!)
@@ -205,6 +210,12 @@ export class DamageModel {
       count++;
     }
     return count > 0 ? sum / count : 0;
+  }
+
+  /** 엣지 e(노드 i 쪽에서 본)를 손상 계산에서 뺄지: 이웃이 유리이고 나는 유리가 아니면 */
+  private ignored(e: number, i: number): boolean {
+    const skip = this.ignoreNeighbors;
+    return skip !== null && !skip[i] && skip[this.graph.other(e, i)] === 1;
   }
 
   /** 노드 i에서 엣지 e 너머 이웃으로의 방향 수직 성분 (-1~1) */

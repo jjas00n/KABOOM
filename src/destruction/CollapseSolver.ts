@@ -5,6 +5,8 @@
 //      섬 경계에 붙어 있던 외장재는 덩어리에 깔려 같이 떨어져 나간다(그대로 두면 fixed 패널이 덩어리를 받쳐 버림).
 //   2) 하중을 다시 계산해 강도를 넘는 엣지 목록을 만든다.
 //   3) 과부하 엣지는 손상이 쌓이다 끊긴다 → 점진적 붕괴 (기둥이 빠지면 그 위가 서서히 주저앉는다).
+//      과부하율이 overloadTolerance 이하인 가벼운 과부하는 버틴다 (손상이 쌓이지 않는다).
+//      안 그러면 몇 % 넘는 엣지가 10~20초 뒤에 끊겨 멀쩡해 보이던 곳이 뒤늦게 무너진다.
 import { STRUCTURE } from '../config';
 import type { StructureGraph } from '../building/StructureGraph';
 
@@ -29,6 +31,7 @@ export class CollapseSolver {
   constructor(
     readonly graph: StructureGraph,
     private readonly failureTime: number = STRUCTURE.failureTime,
+    private readonly tolerance: number = STRUCTURE.overloadTolerance,
   ) {
     this.damage = new Float32Array(graph.edgeCount);
   }
@@ -86,11 +89,12 @@ export class CollapseSolver {
       }
     }
 
-    // 과부하율 r: 손상 += (r - 1) × dt / failureTime. r = 2면 failureTime 뒤에 끊긴다.
+    // 과부하율 r: 손상 += (r - tolerance) × dt / failureTime (r이 tolerance 이하면 그대로 버틴다).
     for (const e of this.overloaded) {
       if (!g.alive[e]) continue;
-      const ratio = g.demand[e]! / g.capacity[e]!;
-      this.damage[e]! += ((ratio - 1) * dt) / this.failureTime;
+      const excess = g.demand[e]! / g.capacity[e]! - this.tolerance;
+      if (excess <= 0) continue;
+      this.damage[e]! += (excess * dt) / this.failureTime;
       if (this.damage[e]! >= 1) {
         g.breakEdge(e);
         this.dirty = true;
