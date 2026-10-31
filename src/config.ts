@@ -370,6 +370,53 @@ export const FIRE = {
   spectateFollowSec: 1.5, // 중심 추적 스무딩 시간상수
 } as const;
 
+/** 손상 외관·느슨한 조각 (destruction/DamageModel.ts, DamageView.ts) */
+export const DAMAGE_VISUAL = {
+  enabled: true, // 외관 효과 (틈·처짐·균열·열화·흔들림). 끄면 원래 자리로
+  updateSec: 0.2, // damage 재계산 주기 (물리 시간)
+  changeEpsilon: 0.02, // 이보다 작은 damage 변화는 무시 (재배치·텍스처 업로드 안 함)
+  // damage = w1·끊긴 연결 면적 비율 + w2·엣지 누적손상 평균 + w3·화재 약화 평균
+  weightBroken: 1.3,
+  weightStrain: 0.5,
+  weightFire: 0.6,
+  // 틈·처짐·기울어짐 (fixed 바디와 렌더를 같이 옮긴다)
+  gapMax: 0.05, // m: 끊긴 이웃에게서 멀어지는 거리 (damage 1일 때)
+  sagMax: 0.08, // m: 아래 지지를 잃으면 처지는 거리
+  tiltMax: 0.06, // rad: 외장재가 바깥으로 기우는 각
+  maxTeleportsPerFrame: 300, // 한 프레임에 옮기는 조각 상한
+  // 셰이더
+  crackWidth: 0.35, // 경계(rim) 쪽 어둡게 할 폭 (damage 1일 때 rim 비율)
+  crackStrength: 0.85,
+  crackNoiseScale: 7, // /m
+  grimeStrength: 0.55, // 먼지·그을음 톤 섞는 정도
+  edgeNormalNoise: 0.6, // 경계 근처 노멀 흔들기
+  swayAmplitude: 0.006, // m: 매달린 조각 흔들림 (불변 조건 1cm 이하)
+  swayHz: 1.3,
+  // 느슨한 조각 낙하
+  looseFactor: 4, // 남은 엣지 강도 합 < 자기 무게 × 이 값이면 떨어진다
+  looseMaxEdges: 1, // 남은 엣지가 이 이하이고
+  looseDamage: 0.6, // damage가 이 이상이어도 떨어진다
+  maxLooseDropsPerStep: 4, // 한 물리 스텝에 떨어뜨리는 상한 (한꺼번에 몰리지 않게)
+  looseWakeRange: 1.8, // 폭발 반경 × 이 값 안의 손상 조각은 작은 충격에도 떨어진다
+  looseWakeDamage: 0.35, // 위 범위에서 이 damage 이상이면
+  chainDamage: 0.45, // 잔해에 부딪힌 조각이 이 damage 이상이면 에너지와 무관하게 떨어진다
+  // 이미 손상된 곳을 맞혔을 때
+  damagedCoreBoost: 0.6, // 코어 반경 비율에 + damage × 이 값 (손상 조각은 더 넓게 떨어져 나간다)
+  penetrationDamageFactor: 0.7, // 관통 저항 × (1 - 이 값 × 주변 damage)
+  penetrationSampleRadius: 1.5, // 주변 damage 표본 반경 (m)
+  // 철근 노출
+  rebarMax: 512,
+  rebarMinGap: 0.03, // m: 구조재 사이 틈이 이보다 크면
+  rebarLength: 0.5,
+  rebarRadius: 0.012,
+  rebarColor: 0x5a4636,
+  // 디버그
+  invariantCheckSec: 1, // GUI 불변 조건 검사 주기 (실제 시간)
+  colliderOverlaySec: 0.25,
+  inPlaceDistance: 0.02, // 불변 조건: 원래 자리로 보는 거리 (m)
+  maxRenderError: 0.01, // 불변 조건: 렌더 ↔ 콜라이더 오차 (m)
+} as const;
+
 /** 포인트 라이트 풀 (fx/LightPool.ts): 개수가 바뀌면 모든 재질 셰이더가 다시 컴파일되므로 고정 */
 export const LIGHT_POOL = {
   size: 5,

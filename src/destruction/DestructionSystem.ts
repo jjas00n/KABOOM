@@ -4,15 +4,18 @@
 //   detonate  → 반경 안 엣지 끊기, 코어 조각 떼어내기 → 임펄스
 //   step      → 충돌 연쇄 판정 → CollapseSolver (섬 → compound 덩어리, 깔린 외장재 → 조각)
 //             → 떨어지는 덩어리 충격 감지 → 약한 내부 엣지부터 끊어 분해 → 잔해 정리
+//             → (damage 켬) 손상도 갱신 → 너무 약해진 조각을 스텝당 상한까지 떨어뜨린다
+// damage를 켜면 이미 손상된 곳은 폭발·잔해 충돌에 더 쉽게 떨어져 나간다 (DamageModel).
 import { Vector3, type Scene } from 'three';
 import { StructureGraph, type NodeInfo } from '../building/StructureGraph';
-import { DEBRIS, STRUCTURE } from '../config';
+import { DAMAGE_VISUAL, DEBRIS, EXPLOSION, STRUCTURE } from '../config';
 import { MATERIAL, type Fragment } from '../fracture/Fragment';
 import type { FragmentMaterials } from '../fracture/FragmentMeshes';
 import type { Vec3Like } from '../fracture/polyhedron';
-import { DEBRIS_GROUPS } from '../physics/collisionGroups';
+import { DEBRIS_GROUPS, DEFAULT_GROUPS } from '../physics/collisionGroups';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import { CollapseSolver, type CollapseEvents } from './CollapseSolver';
+import { DamageModel } from './DamageModel';
 import { DebrisManager } from './DebrisManager';
 import { applyExplosion, blastRadius, breakInBlast, type BlastShape } from './Explosion';
 import { FragmentSet, type Chunk } from './FragmentSet';
@@ -21,6 +24,8 @@ export interface DestructionStats {
   islands: number;
   shatters: number;
   chainBreaks: number;
+  /** 너무 약해져 떨어뜨린 조각 수 (누적) */
+  looseDrops: number;
   overloaded: number;
   compounds: number;
   frozen: number;
@@ -47,6 +52,7 @@ export class DestructionSystem {
     islands: 0,
     shatters: 0,
     chainBreaks: 0,
+    looseDrops: 0,
     overloaded: 0,
     compounds: 0,
     frozen: 0,
@@ -71,7 +77,23 @@ export class DestructionSystem {
   /** 유리 조각이 처음으로 떨어져 나감 (조각 원래 자리) — 이펙트용 */
   onGlassBroken: ((position: Vec3Like) => void) | null = null;
   private readonly glassBroken: Uint8Array;
+  /** 조각 손상도·손상 자세·느슨 판정 */
+  readonly damage: DamageModel;
+  /** damage가 바뀐 노드들 (재사용 배열). 갱신 직후 onDamageChanged로 넘긴다 */
+  private readonly changed: number[] = [];
+  /** 손상도가 바뀌었을 때 (외관 갱신용) */
+  onDamageChanged: ((nodes: readonly number[]) => void) | null = null;
+  /** 떨어뜨릴 느슨한 조각 대기열 (앞쪽이 먼저) */
+  private loose: number[] = [];
+  private readonly queued: Uint8Array;
+  private damageAcc = 0;
+  /** 한 번이라도 dynamic이 된 조각 (불변 조건: 구조에서 떨어진 조각은 반드시 물리로 넘어갔어야 한다) */
+  readonly everDynamic: Uint8Array;
 
+  /**
+   * damageResponse: 손상도에 따른 반응 (느슨한 조각 낙하, 손상 부위 폭발·충돌 증폭).
+   * 끄면 예전과 완전히 같은 경로 (회귀 테스트).
+   */
   constructor(
     scene: Scene,
     private readonly physics: PhysicsWorld,
@@ -79,9 +101,12 @@ export class DestructionSystem {
     materials: FragmentMaterials,
     nodeInfo: (index: number) => NodeInfo,
     simpleColliderMaxVolume = 0,
+    readonly damageResponse = false,
   ) {
     this.graph = StructureGraph.fromFragments(frags, nodeInfo);
     this.solver = new CollapseSolver(this.graph);
+    this.queued = new Uint8Array(frags.length);
+    this.everDynamic = new Uint8Array(frags.length);
     this.positions = new Float64Array(frags.length * 3);
     this.glassBroken = new Uint8Array(frags.length);
     frags.forEach((f, i) => this.positions.set([f.centroid.x, f.centroid.y, f.centroid.z], i * 3));
@@ -93,6 +118,40 @@ export class DestructionSystem {
       simpleColliderMaxVolume,
       onDynamic: (chunk) => this.onDynamic(chunk),
     });
+    this.damage = new DamageModel(this.graph, this.positions, this.solver.edgeDamage);
+  }
+
+  /** 손상도를 지금 구조로 다시 계산하고, 바뀐 노드를 알리고, 느슨한 조각을 대기열에 넣는다 */
+  refreshDamage(): void {
+    this.damage.update(this.changed, DAMAGE_VISUAL.changeEpsilon);
+    if (this.changed.length === 0) return;
+    if (this.damageResponse) {
+      for (const i of this.changed) if (this.damage.isLoose(i)) this.enqueueLoose(i, false);
+    }
+    this.onDamageChanged?.(this.changed);
+  }
+
+  private enqueueLoose(i: number, front: boolean): void {
+    if (this.queued[i]) return;
+    this.queued[i] = 1;
+    if (front) this.loose.unshift(i);
+    else this.loose.push(i);
+  }
+
+  /** 대기열에서 스텝당 상한까지 떨어뜨린다 */
+  private dropLoose(): void {
+    let dropped = 0;
+    while (this.loose.length > 0 && dropped < DAMAGE_VISUAL.maxLooseDropsPerStep) {
+      const i = this.loose.shift()!;
+      this.queued[i] = 0;
+      if (!this.graph.detach(i)) continue;
+      this.fragments.activate(i);
+      dropped++;
+    }
+    if (dropped > 0) {
+      this.stats.looseDrops += dropped;
+      this.solver.markDirty();
+    }
   }
 
   /**
@@ -107,6 +166,7 @@ export class DestructionSystem {
     profile?: BlastProfile,
   ): number {
     const radius = profile ? profile.radius : blastRadius(energy);
+    if (this.damageResponse) this.breakDamaged(center, radius, profile?.coreFraction);
     for (const i of breakInBlast(this.graph, this.positions, center, radius, profile)) {
       this.fragments.activate(i);
     }
@@ -122,7 +182,52 @@ export class DestructionSystem {
       peakDeltaV: profile?.peakDeltaV,
     });
     this.debris.enforceCap();
+    if (this.damageResponse) {
+      this.refreshDamage();
+      this.wakeLoose(center, radius);
+    }
     return radius;
+  }
+
+  /**
+   * 이미 손상된 조각은 더 넓게 떨어져 나간다: 코어 반경 비율 + damage × damagedCoreBoost.
+   * (엣지가 이미 끊겨 breakInBlast가 할 일이 없어도 '맞은 반응'이 나게)
+   */
+  private breakDamaged(center: Vec3Like, radius: number, coreFraction?: number): void {
+    const g = this.graph;
+    const p = this.positions;
+    const base = coreFraction ?? EXPLOSION.coreFraction;
+    for (let i = 0; i < g.nodeCount; i++) {
+      const d = this.damage.damage[i]!;
+      if (!g.attached[i] || d <= 0) continue;
+      const reach = radius * Math.min(1, base + d * DAMAGE_VISUAL.damagedCoreBoost);
+      const d2 =
+        (p[i * 3]! - center.x) ** 2 +
+        (p[i * 3 + 1]! - center.y) ** 2 +
+        (p[i * 3 + 2]! - center.z) ** 2;
+      if (d2 <= reach * reach && g.detach(i)) this.fragments.activate(i);
+    }
+  }
+
+  /** 폭발 여파: 넓은 범위의 손상 조각을 대기열 앞에 넣어 우수수 떨어지게 */
+  private wakeLoose(center: Vec3Like, radius: number): void {
+    const g = this.graph;
+    const p = this.positions;
+    const reach = radius * DAMAGE_VISUAL.looseWakeRange;
+    for (let i = 0; i < g.nodeCount; i++) {
+      if (!g.attached[i] || g.anchor[i]) continue;
+      if (this.damage.damage[i]! < DAMAGE_VISUAL.looseWakeDamage) continue;
+      const d2 =
+        (p[i * 3]! - center.x) ** 2 +
+        (p[i * 3 + 1]! - center.y) ** 2 +
+        (p[i * 3 + 2]! - center.z) ** 2;
+      if (d2 <= reach * reach) this.enqueueLoose(i, true);
+    }
+  }
+
+  /** center 근처 손상도 (관통 저항 계산용) */
+  damageNear(center: Vec3Like, radius: number): number {
+    return this.damage.damageNear(center, radius);
   }
 
   /** 반경 안의 서 있는 유리를 전부 구조에서 떼어낸다 */
@@ -145,6 +250,12 @@ export class DestructionSystem {
     this.processCollisions();
     this.handleCollapse(this.solver.update(dt));
     this.checkImpacts();
+    this.damageAcc += dt;
+    if (this.damageAcc >= DAMAGE_VISUAL.updateSec) {
+      this.damageAcc = 0;
+      this.refreshDamage();
+    }
+    if (this.damageResponse) this.dropLoose();
     this.debris.step(dt);
     this.debris.enforceCap();
     this.stats.overloaded = this.solver.overloadedCount;
@@ -185,8 +296,9 @@ export class DestructionSystem {
   }
 
   private onDynamic(chunk: Chunk): void {
-    // 구조에서 떨어져 나온 조각 = 잔해: 포탄과는 부딪히지 않는다 (굳은 뒤에도 유지)
+    // 움직이는 잔해는 발사체와 부딪히지 않는다 (굳으면 onFrozen에서 되돌린다)
     for (const c of chunk.body.colliders) c.setCollisionGroups(DEBRIS_GROUPS);
+    for (const i of chunk.frags) this.everDynamic[i] = 1;
     this.frozen.delete(chunk);
     if (chunk.frags.length > 1) this.compounds.add(chunk);
     this.debris.add(chunk.body, chunk.volume);
@@ -203,6 +315,8 @@ export class DestructionSystem {
   private onFrozen(body: PhysicsBody): void {
     const chunk = this.fragments.chunkOfBody(body);
     if (!chunk) return;
+    // 굳은 잔해는 눈에 보이는 그대로 다시 맞아야 한다
+    for (const c of chunk.body.colliders) c.setCollisionGroups(DEFAULT_GROUPS);
     this.compounds.delete(chunk);
     this.frozen.add(chunk);
     if (chunk.frags.length === 1 && chunk.volume < DEBRIS.fadeVolume) this.fragments.fade(chunk);
@@ -283,7 +397,9 @@ export class DestructionSystem {
     const speed = mover.preStepVelocity.length(); // 충돌로 멈추기 전 속도
     if (speed < STRUCTURE.chainMinSpeed) return false;
     const energy = 0.5 * mover.rigidBody.mass() * speed * speed;
-    if (energy <= STRUCTURE.chainJoulesPerKg * g.supportCapacity(i)) return false;
+    // 이미 많이 손상된 조각은 작은 충돌에도 떨어진다
+    const weak = this.damageResponse && this.damage.damage[i]! >= DAMAGE_VISUAL.chainDamage;
+    if (!weak && energy <= STRUCTURE.chainJoulesPerKg * g.supportCapacity(i)) return false;
     g.detach(i);
     this.fragments.activate(i);
     this.solver.markDirty();

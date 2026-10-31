@@ -2,6 +2,7 @@
 import type GUI from 'lil-gui';
 import { BUILDING, QUALITY_PRESETS } from '../config';
 import type { BuildingSite } from '../game/BuildingSite';
+import { GraphLegend } from './GraphLegend';
 
 /** 반환: Building 폴더 (호출 쪽이 버튼을 더 붙일 수 있게) */
 export function addBuildingGui(gui: GUI, site: BuildingSite, regenerate: () => void): GUI {
@@ -24,10 +25,15 @@ export function addBuildingGui(gui: GUI, site: BuildingSite, regenerate: () => v
   folder.add(site.stats, 'loadMs').name('Load ms').disable().listen();
 
   const structure = gui.addFolder('Structure');
+  const legend = new GraphLegend();
+  legend.setVisible(site.showGraph);
   structure
     .add(site, 'showGraph')
     .name('Show graph')
-    .onChange((v: boolean) => site.setShowGraph(v));
+    .onChange((v: boolean) => {
+      site.setShowGraph(v);
+      legend.setVisible(v);
+    });
   structure.add(site.stats, 'edges').name('Edges').disable().listen();
   const ds = site.destructionStats;
   structure.add(ds, 'overloaded').name('Overloaded edges').disable().listen();
@@ -35,9 +41,33 @@ export function addBuildingGui(gui: GUI, site: BuildingSite, regenerate: () => v
   structure.add(ds, 'compounds').name('Falling chunks').disable().listen();
   structure.add(ds, 'shatters').name('Impact splits').disable().listen();
   structure.add(ds, 'chainBreaks').name('Chain breaks').disable().listen();
+  structure.add(ds, 'looseDrops').name('Loose drops').disable().listen();
   structure.add(ds, 'frozen').name('Frozen debris').disable().listen();
   structure.add(ds, 'fading').name('Fading').disable().listen();
+  addDamageGui(gui, site);
   return folder;
+}
+
+/** 손상 외관·불변 조건 디버그 */
+function addDamageGui(gui: GUI, site: BuildingSite): void {
+  const folder = gui.addFolder('Damage');
+  folder
+    .add(site, 'damageEffects')
+    .name('Damage visuals')
+    .onChange((v: boolean) => site.setDamageEffects(v));
+  folder
+    .add(site, 'damageHeatmap')
+    .name('Damage heat map')
+    .onChange((v: boolean) => site.setDamageHeatmap(v));
+  folder
+    .add(site, 'showColliders')
+    .name('Collider overlay')
+    .onChange((v: boolean) => site.setShowColliders(v));
+  const s = site.damageStats;
+  folder.add(s, 'violations').name('Invariant violations').disable().listen();
+  folder.add(s, 'maxRenderErrorMm').name('Max render err mm').disable().listen();
+  folder.add(s, 'teleports').name('Moved / frame').disable().listen();
+  folder.add(s, 'uploads').name('Tex uploads / frame').disable().listen();
 }
 
 /** 화재 디버그: heat 히트맵, 확산 배율, 즉시 진화, 타는 조각 수 */
