@@ -1,5 +1,5 @@
 // 부재별 조각 수 배분: 부피 × 부재 종류 밀도에 비례, 합계가 품질 프리셋 목표에 맞도록 스케일
-import { FRACTURE, QUALITY_PRESETS, type QualityPreset } from '../config';
+import { FRACTURE, ORDERS, QUALITY_PRESETS, type QualityPreset } from '../config';
 import { jitteredGridSeeds, type Rng } from '../fracture/seeds';
 import { boxVolume, type Member } from './Member';
 
@@ -27,8 +27,20 @@ export function allocateSeeds(members: readonly Member[], targetFragments: numbe
   );
 }
 
-export function seedCountsForPreset(members: readonly Member[], preset: QualityPreset): number[] {
-  return allocateSeeds(members, QUALITY_PRESETS[preset].targetFragments);
+/** 품질 프리셋 목표 × 주문 예산 배율 (상한 ORDERS.maxFragments) */
+export function targetFragments(preset: QualityPreset, budgetScale = 1): number {
+  return Math.min(
+    Math.round(QUALITY_PRESETS[preset].targetFragments * budgetScale),
+    ORDERS.maxFragments,
+  );
+}
+
+export function seedCountsForPreset(
+  members: readonly Member[],
+  preset: QualityPreset,
+  budgetScale = 1,
+): number[] {
+  return allocateSeeds(members, targetFragments(preset, budgetScale));
 }
 
 /**

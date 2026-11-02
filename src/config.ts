@@ -522,6 +522,86 @@ export const FINALE = {
   completionBonusFraction: 0.3, // 완료 보너스 = 건물 전체 가치 × 이 값 (7-3 주문 보상 자리)
 } as const;
 
+type Range = readonly [number, number];
+
+/** 철거 의뢰 (src/orders/, Phase 7-3). 등급 = 규모·보상, 특징 = 모양·전략 */
+export const ORDERS = {
+  cardsPerBoard: 3,
+  // 등급: 크면 총액은 크지만 시간당 효율은 낮다. 범위는 [최소, 최대] (정수)
+  tiers: {
+    small: {
+      floors: [2, 4] as Range,
+      baysX: [2, 3] as Range,
+      baysZ: [1, 2] as Range,
+      budgetScale: 0.6, // 품질 프리셋 목표 조각 수 × 이 값
+      rewardMultiplier: 1,
+      completionBonus: 0.25, // 완료 보너스 = 건물 전체 가치 × 이 값
+    },
+    medium: {
+      floors: [5, 7] as Range,
+      baysX: [3, 4] as Range,
+      baysZ: [2, 3] as Range,
+      budgetScale: 1,
+      rewardMultiplier: 1.15,
+      completionBonus: 0.3,
+    },
+    large: {
+      floors: [8, 11] as Range,
+      baysX: [4, 6] as Range,
+      baysZ: [3, 4] as Range,
+      budgetScale: 1.4,
+      rewardMultiplier: 1.35,
+      completionBonus: 0.4,
+    },
+  },
+  // 특징 (카드마다 하나): 모양과 보상을 바꾼다
+  windowRatio: [0.4, 0.6] as Range, // 기본 창 비율 범위
+  glassy: { windowRatio: 0.78, glassPriceScale: 0.5 }, // 유리 많음: 잘 깨지지만 유리 단가 절반
+  slender: { bays: [1, 2] as Range, extraFloors: 1, rewardScale: 0.9 }, // 고층 슬림: 무너지기 쉽다
+  sprawling: { extraBaysX: 2, extraBaysZ: 1, budgetScale: 1.25 }, // 저층 넓음: 조각이 많다
+  reinforced: { durabilityBonus: 1, rewardScale: 1.25 }, // 보강: 단단하지만 보상이 크다
+  maxBaysZ: 5, // 대포 언덕(z = +46부터)과 마법사 바위에 닿지 않게
+  maxFragments: 10000, // 품질 × 예산 배율의 상한 (High + 대형에서도)
+  thumbnail: { width: 256, height: 160, cacheSize: 9 },
+  abandonConfirmSec: 3, // '의뢰 포기'를 이 시간 안에 한 번 더 눌러야 포기
+  // 가상의 의뢰인·건물명 (실존 회사·브랜드 금지)
+  clients: [
+    'Grayfield Holdings',
+    'Mossbank Estates',
+    'Tallowmere Council',
+    'Quarry & Finch',
+    'Old Pell Trust',
+    'Brindlewood Partners',
+    'Cobalt Lane Realty',
+    'Ashgrove Cooperative',
+    'Haverly Brothers',
+    'Northwick Rail Co.',
+  ],
+  buildingPrefixes: [
+    'Old Mill',
+    'Riverside',
+    'Copperleaf',
+    'Saltmarsh',
+    'Lantern Row',
+    'Hollow Oak',
+    'Ironbridge',
+    'Kestrel',
+    'Pinecrest',
+    'Marrow Street',
+  ],
+  buildingSuffixes: {
+    small: ['Annex', 'Depot', 'Clinic', 'Workshop'],
+    medium: ['Offices', 'Apartments', 'Hotel', 'Exchange'],
+    large: ['Tower', 'Plaza', 'Center', 'Heights'],
+  },
+} as const;
+
+/** 저장 (src/save/, Phase 7-3) */
+export const SAVE = {
+  key: 'kaboom.save',
+  firstBoardSeed: 1,
+} as const;
+
 /** 포인트 라이트 풀 (fx/LightPool.ts): 개수가 바뀌면 모든 재질 셰이더가 다시 컴파일되므로 고정 */
 export const LIGHT_POOL = {
   size: 5,

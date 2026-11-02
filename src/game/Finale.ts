@@ -84,7 +84,7 @@ export class Finale {
     const p = this.system.positions;
     const ledger = this.economy.ledger;
     const finale = ledger ? (this.economy.releaseFinale(ledger.unpaid())?.amount ?? 0) : 0;
-    const bonus = this.economy.payCompletionBonus(FINALE.completionBonusFraction);
+    const bonus = this.economy.payCompletionBonus(); // 주문의 보너스 비율;
 
     let minX = Infinity;
     let maxX = -Infinity;

@@ -4,6 +4,8 @@ import type { IncomeSource } from '../economy/Wallet';
 import { formatMoney } from './format';
 
 export interface ResultData {
+  /** 주문(건물) 이름 */
+  title: string;
   income: Record<IncomeSource, number>;
   total: number;
   shots: Record<LauncherId, number>;
@@ -43,15 +45,14 @@ export class FinaleBanner {
 
 export class ResultScreen {
   private readonly root = document.createElement('div');
+  private readonly title = document.createElement('div');
   private readonly rows = document.createElement('div');
   private readonly next = document.createElement('button');
 
   /** onNext: '다음 주문' */
   constructor(onNext: () => void) {
     this.root.className = 'result';
-    const title = document.createElement('div');
-    title.className = 'result-title';
-    title.textContent = 'Demolition complete';
+    this.title.className = 'result-title';
     this.rows.className = 'result-rows';
     this.next.className = 'hud-button hud-button-primary result-next';
     this.next.textContent = 'Next order';
@@ -61,12 +62,13 @@ export class ResultScreen {
       this.next.blur();
       onNext();
     });
-    this.root.append(title, this.rows, this.next);
+    this.root.append(this.title, this.rows, this.next);
     this.root.hidden = true;
     document.body.append(this.root);
   }
 
   show(r: ResultData): void {
+    this.title.textContent = `${r.title} — demolished`;
     const shots = r.shots.cannon + r.shots.wizard;
     const pct = (n: number) => (shots > 0 ? Math.round((n / shots) * 100) : 0);
     const min = Math.floor(r.seconds / 60);

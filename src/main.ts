@@ -1,11 +1,13 @@
 // 진입점: 물리 초기화 → 렌더러 → 텍스처/HDRI → 루프 → 게임(또는 디버그 샌드박스) 시작
 import type GUI from 'lil-gui';
+import type { QualityPreset } from './config';
 import { loadAssets, type Assets } from './core/Assets';
 import { FrameTimer } from './core/FrameTimer';
 import { Loop } from './core/Loop';
 import { Renderer } from './core/Renderer';
 import { Game, type TimeControl } from './game/Game';
 import { PhysicsWorld } from './physics/PhysicsWorld';
+import { SaveStore } from './save/SaveStore';
 import { BuildingDemo } from './sandbox/BuildingDemo';
 import { FractureDemo } from './sandbox/FractureDemo';
 import { PhysicsSandbox } from './sandbox/PhysicsSandbox';
@@ -13,6 +15,7 @@ import { addBuildingGui, addFireGui } from './ui/buildingGui';
 import { addVisualsGui } from './ui/visualsGui';
 import { DebugGUI } from './ui/DebugGUI';
 import { LoadingOverlay } from './ui/LoadingOverlay';
+import { MemoryReport } from './ui/MemoryReport';
 
 interface Demo {
   /** 고정 timestep마다 물리 스텝 직후 */
@@ -50,7 +53,15 @@ function createGame(
   loading: LoadingOverlay,
   assets: Assets,
 ): Demo {
-  const game = new Game(renderer, physics, time, loading, assets);
+  const game = new Game(
+    renderer,
+    physics,
+    time,
+    loading,
+    assets,
+    new SaveStore(localStorageOrNull()),
+  );
+  const memory = import.meta.env.DEV ? new MemoryReport(game, physics, renderer.webgl) : null;
   return {
     step: (dt) => game.step(dt),
     update: (dt) => game.update(dt),
@@ -73,7 +84,13 @@ function createGame(
       eco.add(game.economyStats, 'ms').name('Economy ms / frame').decimals(3).disable().listen();
       eco.add({ fill: () => game.fillToThreshold() }, 'fill').name('Fill to threshold');
       eco.add({ trigger: () => game.triggerFinale() }, 'trigger').name('Trigger finale');
-      addBuildingGui(gui, game.site, () => game.reset());
+      eco.add({ reset: () => game.resetSave() }, 'reset').name('Reset save');
+      const building = addBuildingGui(gui, game.site, () => game.reset());
+      // 품질은 저장되는 설정이다
+      building.controllers
+        .find((c) => c.property === 'quality')
+        ?.onChange((q: QualityPreset) => game.setQuality(q));
+      memory?.addGui(gui);
       addFireGui(gui, game.site);
       addVisualsGui(gui, renderer.postfx, game.site);
     },
@@ -118,6 +135,15 @@ function createFractureDemo(renderer: Renderer, physics: PhysicsWorld, assets: A
       folder.add({ rebuild: () => demo.reset() }, 'rebuild').name('Rebuild');
     },
   };
+}
+
+/** localStorage (접근 자체가 막힌 환경이면 null → 저장 없이 진행) */
+function localStorageOrNull(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 async function main(): Promise<void> {

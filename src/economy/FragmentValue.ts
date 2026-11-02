@@ -1,6 +1,7 @@
 // 조각 가치 (순수 함수):
 //   가치 = max(질량 × 단가, 최소 가치) × 배율(Modifiers: 주문 배율 등) × (희귀면 rareMultiplier)
 //   단가는 부재 종류(kind)가 우선 (기초 0), 없으면 재질(concrete / glass). 단가 0이면 가치 0 (최소 가치 없음).
+//   주문 특징이 재질 단가를 바꿀 수 있다 (PriceScale, 예: 유리 많은 건물은 유리 단가 절반).
 import { ECONOMY } from '../config';
 import { createRng } from '../fracture/seeds';
 
@@ -11,9 +12,17 @@ export interface PriceTable {
   rareMultiplier: number;
 }
 
+/** 재질별 단가 배율 (주문 특징). 없는 재질은 1 */
+export type PriceScale = Readonly<Partial<Record<string, number>>>;
+
 /** 조각 하나의 단가 ($/kg) */
-export function unitPrice(kind: string, material: string, table: PriceTable = ECONOMY): number {
-  return table.kindPricePerKg[kind] ?? table.pricePerKg[material] ?? 0;
+export function unitPrice(
+  kind: string,
+  material: string,
+  table: PriceTable = ECONOMY,
+  scale?: PriceScale,
+): number {
+  return (table.kindPricePerKg[kind] ?? table.pricePerKg[material] ?? 0) * (scale?.[material] ?? 1);
 }
 
 /** 조각 하나의 가치 ($). multiplier: Modifiers.total */
@@ -24,8 +33,9 @@ export function fragmentValue(
   multiplier: number,
   rare: boolean,
   table: PriceTable = ECONOMY,
+  scale?: PriceScale,
 ): number {
-  const price = unitPrice(kind, material, table);
+  const price = unitPrice(kind, material, table, scale);
   if (price <= 0) return 0;
   const base = Math.max(mass * price, table.minValue);
   return base * multiplier * (rare ? table.rareMultiplier : 1);

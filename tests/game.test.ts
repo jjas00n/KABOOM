@@ -20,7 +20,18 @@ import { GameState, StateMachine, TRANSITIONS } from '../src/game/StateMachine';
 import { PhysicsWorld } from '../src/physics/PhysicsWorld';
 
 const dt = PHYSICS.fixedTimestep;
-const { IDLE, CUTSCENE, AIMING, PROJECTILE_CAM, IMPACT, SPECTATE } = GameState;
+const {
+  ORDER_BOARD,
+  LOADING,
+  IDLE,
+  CUTSCENE,
+  AIMING,
+  PROJECTILE_CAM,
+  IMPACT,
+  SPECTATE,
+  FINALE,
+  RESULT,
+} = GameState;
 
 describe('StateMachine', () => {
   it('follows the CLAUDE.md diagram end to end', () => {
@@ -47,6 +58,50 @@ describe('StateMachine', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(fsm.transition(CUTSCENE, 'wizard')).toBe(false);
     expect(fsm.launcher).toBe('cannon');
+    warn.mockRestore();
+  });
+
+  it('matches the 7-3 transition table exactly', () => {
+    expect(TRANSITIONS).toEqual({
+      [ORDER_BOARD]: [LOADING],
+      [LOADING]: [IDLE, ORDER_BOARD],
+      [IDLE]: [CUTSCENE, LOADING, ORDER_BOARD],
+      [CUTSCENE]: [AIMING],
+      [AIMING]: [PROJECTILE_CAM],
+      [PROJECTILE_CAM]: [IMPACT, SPECTATE],
+      [IMPACT]: [SPECTATE, FINALE],
+      [SPECTATE]: [CUTSCENE, IDLE, FINALE, LOADING, ORDER_BOARD],
+      [FINALE]: [RESULT],
+      [RESULT]: [ORDER_BOARD],
+    });
+  });
+
+  it('runs the order loop: board → loading → play → finale → result → board', () => {
+    const fsm = new StateMachine(ORDER_BOARD);
+    for (const s of [
+      LOADING,
+      IDLE,
+      CUTSCENE,
+      AIMING,
+      PROJECTILE_CAM,
+      IMPACT,
+      SPECTATE,
+      FINALE,
+      RESULT,
+      ORDER_BOARD,
+      LOADING,
+    ]) {
+      expect(fsm.transition(s)).toBe(true);
+    }
+    // 생성 실패 → 게시판, 의뢰 포기(IDLE·SPECTATE) → 게시판
+    expect(fsm.transition(ORDER_BOARD)).toBe(true);
+    expect(new StateMachine(IDLE).transition(ORDER_BOARD)).toBe(true);
+    expect(new StateMachine(SPECTATE).transition(ORDER_BOARD)).toBe(true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(new StateMachine(RESULT).transition(IDLE)).toBe(false); // 결과 다음은 게시판뿐
+    expect(new StateMachine(ORDER_BOARD).transition(IDLE)).toBe(false); // 로딩 없이 시작 못 함
+    expect(new StateMachine(AIMING).transition(ORDER_BOARD)).toBe(false); // 조준·비행 중엔 포기 못 함
+    expect(new StateMachine(FINALE).transition(ORDER_BOARD)).toBe(false);
     warn.mockRestore();
   });
 

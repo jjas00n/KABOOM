@@ -1,6 +1,7 @@
 // 건물 한 채의 수명: 절차적 생성 → 부재별 사전 분할(워커) → 구조 그래프 + 조각 물리 → 파괴·화재 (+ 이펙트).
 // 게임(Game)과 디버그 샌드박스(BuildingDemo)가 같이 쓴다. 카메라/입력은 모른다.
 // 손상 외관(DamageView: 틈·균열·흔들림, Rebar: 철근)과 불변 조건 검사도 여기서 돌린다.
+// teardown()은 건물 한 채가 쥔 GPU·물리·화재·파티클·워커 자원을 전부 놓는다 (주문 교체, 7-3).
 import { Color, type Scene, type Vector3 } from 'three';
 import {
   generateBuilding,
@@ -27,10 +28,11 @@ import { DestructionSystem, type DestructionStats } from '../destruction/Destruc
 import { Durability } from '../destruction/Durability';
 import { checkInvariants, violationCount } from '../destruction/Invariants';
 import { StructureDebug } from '../destruction/StructureDebug';
-import { fractureInWorker } from '../fracture/FractureJob';
+import { FractureAborted, fractureInWorker } from '../fracture/FractureJob';
 import { MATERIAL, type Fragment } from '../fracture/Fragment';
 import {
   createFragmentMaterials,
+  resetDamageMaps,
   setGlassMode,
   type FragmentMaterials,
 } from '../fracture/FragmentMeshes';
@@ -41,6 +43,7 @@ import { LightPool } from '../fx/LightPool';
 import { Rebar } from '../fx/Rebar';
 import { ColliderOverlay } from '../physics/ColliderOverlay';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
+import type { Order } from '../orders/Order';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
 import { BuildingFire } from './BuildingFire';
 import { fireballProfile } from './fireball';
@@ -57,10 +60,17 @@ const heat = new Color();
 /** 내구도 히트맵에서 빨강이 되는 내구도 */
 const DURABILITY_HEAT_MAX = 4;
 
+export interface SiteSettings extends BuildingParams {
+  quality: QualityPreset;
+  /** 조각 예산 배율 (주문 등급·특징) */
+  budgetScale: number;
+}
+
 export class BuildingSite {
-  readonly settings: BuildingParams & { quality: QualityPreset } = {
+  readonly settings: SiteSettings = {
     ...DEFAULT_BUILDING,
     quality: DEFAULT_QUALITY,
+    budgetScale: 1,
   };
   readonly stats = { members: 0, fragments: 0, edges: 0, loadMs: 0 };
   /** GUI가 붙잡는 고정 객체. 건물을 새로 만들어도 같은 객체에 값을 복사한다. */
@@ -127,6 +137,8 @@ export class BuildingSite {
   private warned = false;
   /** reset이 겹쳐 들어오면 늦게 끝난 이전 생성 결과를 버리기 위한 세대 번호 */
   private generation = 0;
+  /** 진행 중인 분할 워커를 끊는 용도 */
+  private fracturing: AbortController | null = null;
 
   /** 건물 외곽 + 높이 (그림자 범위 등). 생성 전 null */
   private readonly box: Aabb = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
@@ -357,6 +369,40 @@ export class BuildingSite {
     this.graphDebug?.setEnabled(enabled);
   }
 
+  /** 주문의 건물 파라미터를 설정에 복사한다 (품질은 사용자 설정 유지). 다음 reset부터 */
+  applyOrder(order: Order): void {
+    Object.assign(this.settings, order.building, { budgetScale: order.budgetScale });
+  }
+
+  /**
+   * 지금 건물을 버린다: 조각 메시(BatchedMesh·지오메트리)·damage 텍스처, Rapier 바디·콜라이더,
+   * 화재 상태·라이트, 파티클, 철근, 디버그 그래프, 진행 중인 분할 워커.
+   * 늦게 끝나는 이전 생성 결과도 버려진다 (세대 번호).
+   */
+  teardown(): void {
+    this.generation++;
+    this.fracturing?.abort();
+    this.fracturing = null;
+    this.graphDebug?.dispose();
+    this.graphDebug = null;
+    this.burning?.dispose();
+    this.burning = null;
+    this.damageView = null;
+    this.rebar.clear();
+    this.colliders.clear();
+    this.finaleActive = false;
+    this.materials.quake.value = 0;
+    this.materials.crackFloor.value = 0;
+    this.warned = false;
+    this.system?.dispose();
+    this.system = null;
+    resetDamageMaps(this.materials);
+    this.effects.clear();
+    this.kinds = [];
+    this.footprint = null;
+    this.height = 0;
+  }
+
   /**
    * 현재 설정으로 건물을 새로 만든다. 반환: 이 호출이 끝까지 반영됐으면 true
    * (도중에 다시 reset이 불려 버려졌으면 false).
@@ -365,27 +411,15 @@ export class BuildingSite {
     try {
       return await this.build();
     } catch (err) {
-      console.error('building generation failed', err);
+      if (!(err instanceof FractureAborted)) console.error('building generation failed', err);
       this.loading.hide();
       return false;
     }
   }
 
   private async build(): Promise<boolean> {
-    const generation = ++this.generation;
-    this.graphDebug?.dispose();
-    this.graphDebug = null;
-    this.burning?.dispose();
-    this.burning = null;
-    this.damageView = null;
-    this.rebar.clear();
-    this.finaleActive = false;
-    this.materials.quake.value = 0;
-    this.materials.crackFloor.value = 0;
-    this.warned = false;
-    this.system?.dispose();
-    this.system = null;
-    this.effects.clear();
+    this.teardown();
+    const generation = this.generation;
     this.effects.setQuality(this.settings.quality);
     // 프리셋이 바뀌면 유리 방식도 프리셋 기본값으로 (GUI로 바꾼 값은 다음 프리셋 변경까지 유지)
     if (this.settings.quality !== this.builtQuality) {
@@ -396,11 +430,9 @@ export class BuildingSite {
     const started = performance.now();
     this.loading.show('Generating building…');
 
-    const { quality, ...params } = this.settings;
+    const { quality, budgetScale, ...params } = this.settings;
     const { members, footprint, height } = generateBuilding(params);
-    this.footprint = footprint;
-    this.height = height;
-    const counts = seedCountsForPreset(members, quality);
+    const counts = seedCountsForPreset(members, quality, budgetScale);
     const rng = createRng(params.seed);
     const jobs = members.map((m, i) => ({
       box: m.box,
@@ -408,18 +440,26 @@ export class BuildingSite {
       material: m.kind === 'glass' ? MATERIAL.glass : MATERIAL.concrete,
     }));
 
-    const frags = await fractureInWorker({ jobs }, (done, total) =>
-      this.loading.progress(
-        (done / total) * FRACTURE_PROGRESS_SHARE,
-        `Fracturing ${members.length} members… ${done}/${total}`,
-      ),
+    const fracturing = new AbortController();
+    this.fracturing = fracturing;
+    const frags = await fractureInWorker(
+      { jobs },
+      (done, total) =>
+        this.loading.progress(
+          (done / total) * FRACTURE_PROGRESS_SHARE,
+          `Fracturing ${members.length} members… ${done}/${total}`,
+        ),
+      fracturing.signal,
     );
+    if (this.fracturing === fracturing) this.fracturing = null;
     if (generation !== this.generation) return false;
 
     this.loading.progress(FRACTURE_PROGRESS_SHARE, `Building ${frags.length} fragments…`);
     await nextFrame(); // 진행률 표시가 그려진 뒤 무거운 메인 스레드 작업
     if (generation !== this.generation) return false;
 
+    this.footprint = footprint;
+    this.height = height;
     const member = (i: number) => members[frags[i]!.member]!;
     this.kinds = frags.map((f) => members[f.member]!.kind);
     const d = new DestructionSystem(

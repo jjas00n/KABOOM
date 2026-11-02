@@ -1,12 +1,16 @@
 // 게임 상태 머신 (상태 변경은 여기서만, 선택된 발사대도 여기서 같이 바꾼다)
 // CLAUDE.md 다이어그램:
+//   ORDER_BOARD ─[카드 선택]→ LOADING ─(생성 끝)→ IDLE   (생성 실패 → ORDER_BOARD)
 //   IDLE ─[대포/마법사]→ CUTSCENE ─(비행 끝/스킵)→ AIMING ─[발사]→ PROJECTILE_CAM
 //   PROJECTILE_CAM ─(충돌)→ IMPACT ─(hit-stop 끝)→ SPECTATE   (빗나가면 PROJECTILE_CAM → SPECTATE)
-//   SPECTATE ─[대포/마법사]→ CUTSCENE,  SPECTATE ─[리셋/뒤로]→ IDLE
-//   IMPACT·SPECTATE ─(파괴율 ≥ 임계값, 건물당 1회)→ FINALE ─(연출 끝/스킵)→ RESULT ─[다음 주문]→ IDLE
+//   SPECTATE ─[대포/마법사]→ CUTSCENE,  SPECTATE ─[뒤로]→ IDLE
+//   IDLE·SPECTATE ─[의뢰 포기]→ ORDER_BOARD,  IDLE·SPECTATE ─[디버그 재생성]→ LOADING
+//   IMPACT·SPECTATE ─(파괴율 ≥ 임계값, 건물당 1회)→ FINALE ─(연출 끝/스킵)→ RESULT ─[다음 주문]→ ORDER_BOARD
 import type { LauncherId } from './Launcher';
 
 export const GameState = {
+  ORDER_BOARD: 'ORDER_BOARD',
+  LOADING: 'LOADING',
   IDLE: 'IDLE',
   CUTSCENE: 'CUTSCENE',
   AIMING: 'AIMING',
@@ -18,18 +22,31 @@ export const GameState = {
 } as const;
 export type GameState = (typeof GameState)[keyof typeof GameState];
 
-const { IDLE, CUTSCENE, AIMING, PROJECTILE_CAM, IMPACT, SPECTATE, FINALE, RESULT } = GameState;
+const {
+  ORDER_BOARD,
+  LOADING,
+  IDLE,
+  CUTSCENE,
+  AIMING,
+  PROJECTILE_CAM,
+  IMPACT,
+  SPECTATE,
+  FINALE,
+  RESULT,
+} = GameState;
 
 /** 허용 전이 표 */
 export const TRANSITIONS: Readonly<Record<GameState, readonly GameState[]>> = {
-  [IDLE]: [CUTSCENE],
+  [ORDER_BOARD]: [LOADING],
+  [LOADING]: [IDLE, ORDER_BOARD],
+  [IDLE]: [CUTSCENE, LOADING, ORDER_BOARD],
   [CUTSCENE]: [AIMING],
   [AIMING]: [PROJECTILE_CAM],
   [PROJECTILE_CAM]: [IMPACT, SPECTATE],
   [IMPACT]: [SPECTATE, FINALE],
-  [SPECTATE]: [CUTSCENE, IDLE, FINALE],
+  [SPECTATE]: [CUTSCENE, IDLE, FINALE, LOADING, ORDER_BOARD],
   [FINALE]: [RESULT],
-  [RESULT]: [IDLE],
+  [RESULT]: [ORDER_BOARD],
 };
 
 export type StateListener = (from: GameState, to: GameState) => void;

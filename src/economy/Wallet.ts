@@ -1,4 +1,4 @@
-// 지갑: 현재 돈과 누적 수익. 지금은 쓰는 곳이 없다 (Phase 10 업그레이드). 7-3에서 저장된다.
+// 지갑: 현재 돈과 누적 수익. 지금은 쓰는 곳이 없다 (Phase 10 업그레이드). 저장된다 (src/save/).
 
 /** 수익 출처: 파편 분리(파괴) / 완파 피날레 / 주문 완료 보너스 */
 export type IncomeSource = 'fragments' | 'finale' | 'bonus';
@@ -21,6 +21,13 @@ export class Wallet {
   /** 이번 건물 수익 합계 */
   get buildingTotal(): number {
     return this.building.fragments + this.building.finale + this.building.bonus;
+  }
+
+  /** 저장에서 복원 (이번 건물 수익은 0) */
+  restore(money: number, lifetimeEarned: number): void {
+    this.money = money;
+    this.lifetimeEarned = Math.max(lifetimeEarned, money);
+    this.startBuilding();
   }
 
   /** 새 건물: 이번 건물 수익만 0으로 (돈·누적은 유지) */
