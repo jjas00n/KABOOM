@@ -68,6 +68,7 @@ import { GameState, StateMachine } from './StateMachine';
 import { TrajectoryLine } from './TrajectoryLine';
 import { Wizard } from './Wizard';
 import { XRayKillCam } from './XRayKillCam';
+import { prewarmGpu } from '../core/prewarm';
 
 /** hit-stop이 물리 시간을 늦추는 대상 (Loop의 FixedStepper) */
 export interface TimeControl {
@@ -237,6 +238,8 @@ export class Game {
       if (document.visibilityState === 'hidden') this.persist();
     });
     this.enterOrderBoard();
+    // 숨겨 둔 발사대·발사체 등 오래 사는 것들을 지금 GPU에 올린다 (첫 사용 끊김 방지)
+    prewarmGpu(renderer.webgl, scene, camera);
   }
 
   get state(): GameState {
