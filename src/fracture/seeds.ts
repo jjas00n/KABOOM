@@ -23,6 +23,8 @@ export function uniformSeeds(bounds: Aabb, count: number, rng: Rng): Float64Arra
   return out;
 }
 
+const NO_STRETCH = [1, 1, 1] as const;
+
 /**
  * 박스를 약 count개의 정육면체에 가까운 칸으로 나누고 칸마다 시드 1개를 흔들어 놓는다.
  * 균일 랜덤보다 조각 크기가 고르다. 실제 개수는 칸 분할에 따라 count와 조금 다를 수 있다.
@@ -32,11 +34,16 @@ export function jitteredGridSeeds(
   count: number,
   rng: Rng,
   jitter: number = FRACTURE.jitter,
+  stretch: readonly [number, number, number] = NO_STRETCH,
 ): Float64Array {
   const sx = bounds.max.x - bounds.min.x;
   const sy = bounds.max.y - bounds.min.y;
   const sz = bounds.max.z - bounds.min.z;
-  const [nx, ny, nz] = gridDims([sx, sy, sz], Math.max(count, 1));
+  // stretch: 그 축 칸을 이 배수만큼 길게 (나뭇결: 판자가 길이 방향으로 쪼개진다)
+  const [nx, ny, nz] = gridDims(
+    [sx / stretch[0], sy / stretch[1], sz / stretch[2]],
+    Math.max(count, 1),
+  );
   const cx = sx / nx;
   const cy = sy / ny;
   const cz = sz / nz;

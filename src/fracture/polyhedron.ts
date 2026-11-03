@@ -32,6 +32,27 @@ export interface Aabb {
   max: Vec3Like;
 }
 
+/** 반공간 n·x <= d (n은 단위 벡터, 바깥 방향) */
+export interface Plane {
+  nx: number;
+  ny: number;
+  nz: number;
+  d: number;
+}
+
+/**
+ * 볼록 부재 모양: 박스를 반공간들로 자른 다면체 (박공 지붕, n각 기둥, 테이퍼).
+ * 잘린 면도 외부면이다. planes가 없으면 박스 그대로.
+ */
+export function clippedBox(box: Aabb, planes: readonly Plane[] = []): Polyhedron {
+  let poly: Polyhedron | null = boxPolyhedron(box.min, box.max);
+  for (const p of planes) {
+    poly = clipPolyhedron(poly, p.nx, p.ny, p.nz, p.d, EXTERIOR);
+    if (!poly) throw new Error('clippedBox: empty shape');
+  }
+  return poly;
+}
+
 /** 축 정렬 박스 다면체 */
 export function boxPolyhedron(min: Vec3Like, max: Vec3Like): Polyhedron {
   const corners: number[][] = [];
@@ -217,6 +238,32 @@ export function polyhedronBounds(poly: Polyhedron): Aabb {
     }
   }
   return { min, max };
+}
+
+/**
+ * 축별 배율로 늘린 다면체 (아핀 변환이라 볼록·면 구성이 유지된다).
+ * 법선은 역배율로 변환해 정규화하고 d는 정점에서 다시 구한다.
+ */
+export function scalePolyhedron(poly: Polyhedron, sx: number, sy: number, sz: number): Polyhedron {
+  return {
+    faces: poly.faces.map((f) => {
+      const verts = f.verts.slice();
+      for (let k = 0; k < verts.length; k += 3) {
+        verts[k] = verts[k]! * sx;
+        verts[k + 1] = verts[k + 1]! * sy;
+        verts[k + 2] = verts[k + 2]! * sz;
+      }
+      let nx = f.nx / sx;
+      let ny = f.ny / sy;
+      let nz = f.nz / sz;
+      const len = Math.hypot(nx, ny, nz);
+      nx /= len;
+      ny /= len;
+      nz /= len;
+      const d = nx * verts[0]! + ny * verts[1]! + nz * verts[2]!;
+      return { verts, nx, ny, nz, d, neighbor: f.neighbor };
+    }),
+  };
 }
 
 /** 점이 다면체 안(경계 포함)에 있는지 */

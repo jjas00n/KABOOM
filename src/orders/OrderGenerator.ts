@@ -3,7 +3,7 @@
 //   - 특징(유리 많음/고층 슬림/저층 넓음/보강) = 모양과 보상을 바꿔 고르는 데 전략이 생기게
 //   - unlockedTiers: 열린 등급만 나온다 (Phase 10 등급 해금 자리). 다 열려 있으면 등급마다 한 장
 import { DEFAULT_BUILDING, generateBuilding } from '../building/BuildingGenerator';
-import { boxVolume } from '../building/Member';
+import { memberVolume } from '../building/Member';
 import { seedCountsForPreset } from '../building/seedBudget';
 import {
   BUILDING,
@@ -141,7 +141,7 @@ function estimate(order: Order): void {
     let value = 0;
     members.forEach((m, i) => {
       const n = counts[i]!;
-      const mass = (boxVolume(m.box) * MATERIALS[m.material].density) / n;
+      const mass = (memberVolume(m) * MATERIALS[m.material].density) / n;
       fragments += n;
       value += n * fragmentValue(mass, m.kind, m.material, 1, false, ECONOMY, order.priceScale);
     });

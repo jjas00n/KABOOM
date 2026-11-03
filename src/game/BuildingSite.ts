@@ -437,6 +437,8 @@ export class BuildingSite {
     const rng = createRng(params.seed);
     const jobs = members.map((m, i) => ({
       box: m.box,
+      planes: m.planes,
+      grain: m.grain,
       seeds: memberSeeds(m, counts[i]!, rng),
       material: materialId(m.material),
     }));
