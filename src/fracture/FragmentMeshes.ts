@@ -1,4 +1,5 @@
-// 조각 렌더: 재질별 BatchedMesh (콘크리트 외면 / 콘크리트 단면 / 유리) → 드로우콜 최대 3개
+// 조각 렌더: 재질별 BatchedMesh. 불투명 재질은 외면/단면 두 배치, 판재(유리·크리스털)는 한 배치.
+// 건물이 쓰는 재질만 배치가 생긴다 (office: 콘크리트 외면·단면 + 유리 = 3, 입문 건물 2~4).
 // 외면: 부재 기준 박스 투영 UV (Fragment.ts). 단면: 조각 원래 자리 좌표(rest)로 트라이플래너.
 // 인스턴스 색(RGBA) = 조각별 기본색(tint). 화재가 RGB를 그을음으로 어둡게 하고, 알파로 불씨 세기를 넘긴다
 // (알파 = 1 - 불씨). 불투명 재질이라 알파는 원래 안 쓰이고, 엑스레이(투명) 중에는 불씨 해석을 끈다.
@@ -21,28 +22,44 @@ import {
   type Material,
 } from 'three';
 import {
-  CONCRETE,
   DAMAGE_VISUAL,
   DURABILITY,
   FIRE,
   GLASS,
+  MATERIALS,
   TEXTURES,
   type GlassMode,
+  type MaterialName,
+  type SurfaceSpec,
 } from '../config';
 import { NOISE_GLSL } from '../fx/noise';
-import type { Assets } from '../core/Assets';
+import type { Assets, PbrTextures } from '../core/Assets';
 import { createRng } from './seeds';
-import { isPane, type Fragment } from './Fragment';
+import { materialName, type Fragment } from './Fragment';
 import type { BatchSlot } from '../physics/PhysicsWorld';
 
+/** 손상 데이터 텍스처 자리 (배치가 만들어 끼운다) */
+export interface DamageMapHolder {
+  value: DataTexture;
+}
+
+/** 불투명 재질 하나의 외면/단면 재질 + 손상 텍스처 자리 */
+export interface SurfaceMaterials {
+  exterior: MeshStandardMaterial;
+  interior: MeshStandardMaterial;
+  damageMaps: { exterior: DamageMapHolder; interior: DamageMapHolder };
+}
+
 export interface FragmentMaterials {
-  exterior: Material;
-  interior: Material;
-  glass: MeshPhysicalMaterial;
+  /** 불투명 재질별 외면/단면 (건물이 쓰는 재질만, 처음 쓸 때 만들어 계속 쓴다) */
+  surfaces: Map<MaterialName, SurfaceMaterials>;
+  /** 판재(유리·크리스털)별 재질 */
+  panes: Map<MaterialName, MeshPhysicalMaterial>;
+  /** 텍스처 폴더 → 맵 (loadSurfaceTextures가 채운다. 없으면 단색) */
+  textures: Map<string, PbrTextures>;
+  glassMode: GlassMode;
   /** 불씨 깜빡임·흔들림 시계 (s). 매 프레임 갱신 */
   fireTime: { value: number };
-  /** 손상 데이터 텍스처 (재질별, FragmentMeshes가 채운다) */
-  damageMaps: { exterior: { value: DataTexture }; interior: { value: DataTexture } };
   /** 손상 외관 효과 켬(1)/끔(0) */
   damageOn: { value: number };
   /** 피날레 진동 진폭 (m, 렌더 전용) */
@@ -63,66 +80,140 @@ function emptyDamageMap(): DataTexture {
 
 /** 건물을 버릴 때: 조각별 damage 텍스처를 해제하고 1×1 빈 텍스처로 되돌린다 */
 export function resetDamageMaps(materials: FragmentMaterials): void {
-  for (const holder of [materials.damageMaps.exterior, materials.damageMaps.interior]) {
-    holder.value.dispose();
-    holder.value = emptyDamageMap();
+  for (const s of materials.surfaces.values()) {
+    for (const holder of [s.damageMaps.exterior, s.damageMaps.interior]) {
+      holder.value.dispose();
+      holder.value = emptyDamageMap();
+    }
   }
 }
 
 /** 단면 지오메트리의 원래 자리 월드 좌표 속성 (트라이플래너 입력) */
 export const REST_ATTRIBUTE = 'rest';
 
-/** assets가 없으면(테스트) 단색 재질 */
+/**
+ * 재질 묶음. assets가 없으면(테스트) 단색. concrete·glass는 바로 만든다 (office, 시작 prewarm),
+ * 다른 재질은 그 재질을 쓰는 건물이 처음 생길 때 (surfaceMaterials / paneMaterial).
+ */
 export function createFragmentMaterials(
   assets: Assets | null = null,
   glassMode: GlassMode = GLASS.defaultMode,
 ): FragmentMaterials {
-  const exterior = new MeshStandardMaterial({
-    color: assets
-      ? new Color(CONCRETE.exteriorTint).multiplyScalar(CONCRETE.exteriorBrightness)
-      : CONCRETE.exteriorColor,
-    roughness: assets ? 1 : CONCRETE.exteriorRoughness,
-  });
-  const interior = new MeshStandardMaterial({
-    color: assets
-      ? new Color(CONCRETE.interiorTint).multiplyScalar(CONCRETE.interiorBrightness)
-      : CONCRETE.interiorColor,
-    roughness: CONCRETE.interiorRoughness,
-    // 이음매에서 이웃 조각의 외부면과 깊이가 같아지는 픽셀에서 외부면이 이기도록 단면을 살짝 뒤로 민다
-    polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
-  });
-  if (assets) {
-    exterior.map = assets.exterior.color;
-    exterior.normalMap = assets.exterior.normal;
-    exterior.roughnessMap = assets.exterior.roughness;
-    exterior.aoMap = assets.exterior.ao ?? null;
-    exterior.normalScale = new Vector2(CONCRETE.normalScale, CONCRETE.normalScale);
-    interior.map = assets.interior.color;
-    interior.normalMap = assets.interior.normal;
-    interior.roughnessMap = assets.interior.roughness;
-    interior.normalScale = new Vector2(CONCRETE.normalScale, CONCRETE.normalScale);
-    makeTriplanar(interior);
-  }
-  const fireTime = { value: 0 };
-  const damageMaps = {
-    exterior: { value: emptyDamageMap() },
-    interior: { value: emptyDamageMap() },
+  const materials: FragmentMaterials = {
+    surfaces: new Map(),
+    panes: new Map(),
+    textures: new Map(),
+    glassMode,
+    fireTime: { value: 0 },
+    damageOn: { value: DAMAGE_VISUAL.enabled ? 1 : 0 },
+    quake: { value: 0 },
+    crackFloor: { value: 0 },
   };
-  const damageOn = { value: DAMAGE_VISUAL.enabled ? 1 : 0 };
-  const quake = { value: 0 };
-  const crackFloor = { value: 0 };
-  addSurfaceFx(exterior, fireTime, damageMaps.exterior, damageOn, quake, crackFloor);
-  addSurfaceFx(interior, fireTime, damageMaps.interior, damageOn, quake, crackFloor);
-  const glass = new MeshPhysicalMaterial({
-    color: GLASS.color,
-    roughness: GLASS.roughness,
+  if (assets) {
+    materials.textures.set(MATERIALS.concrete.exterior.texture!, assets.exterior);
+    materials.textures.set(MATERIALS.concrete.interior.texture!, assets.interior);
+  }
+  surfaceMaterials(materials, 'concrete');
+  paneMaterial(materials, 'glass');
+  return materials;
+}
+
+/** 이 재질들이 쓰는 텍스처를 미리 받아 둔다 (건물 생성 전, 이미 받은 건 캐시) */
+export async function loadSurfaceTextures(
+  materials: FragmentMaterials,
+  assets: Assets | null,
+  names: Iterable<MaterialName>,
+): Promise<void> {
+  if (!assets) return;
+  const folders = new Set<string>();
+  for (const name of names) {
+    const spec = MATERIALS[name];
+    if (spec.pane) continue;
+    for (const t of [spec.exterior.texture, spec.interior.texture]) {
+      if (t && !materials.textures.has(t)) folders.add(t);
+    }
+  }
+  await Promise.all(
+    [...folders].map(async (folder) => {
+      materials.textures.set(folder, await assets.surface(folder));
+    }),
+  );
+}
+
+/** 불투명 재질의 외면/단면 (없으면 만든다. 텍스처는 loadSurfaceTextures로 먼저 받아 둔다) */
+export function surfaceMaterials(
+  materials: FragmentMaterials,
+  name: MaterialName,
+): SurfaceMaterials {
+  const cached = materials.surfaces.get(name);
+  if (cached) return cached;
+  const spec = MATERIALS[name];
+  const make = (surface: SurfaceSpec, role: 'exterior' | 'interior') => {
+    const maps = surface.texture ? materials.textures.get(surface.texture) : undefined;
+    const m = new MeshStandardMaterial({
+      color: maps ? new Color(surface.tint).multiplyScalar(surface.brightness) : surface.color,
+      // 외면 거칠기는 맵이 정한다 (맵 × 1). 단면은 값 × 맵
+      roughness: maps && role === 'exterior' ? 1 : surface.roughness,
+    });
+    if (role === 'interior') {
+      // 이음매에서 이웃 조각의 외부면과 깊이가 같아지는 픽셀에서 외부면이 이기도록 단면을 살짝 뒤로 민다
+      m.polygonOffset = true;
+      m.polygonOffsetFactor = 1;
+      m.polygonOffsetUnits = 1;
+    }
+    if (maps) {
+      m.map = maps.color;
+      m.normalMap = maps.normal;
+      m.roughnessMap = maps.roughness;
+      if (role === 'exterior') m.aoMap = maps.ao ?? null;
+      m.normalScale = new Vector2(spec.normalScale, spec.normalScale);
+      if (role === 'interior') makeTriplanar(m);
+    }
+    return m;
+  };
+  const s: SurfaceMaterials = {
+    exterior: make(spec.exterior, 'exterior'),
+    interior: make(spec.interior, 'interior'),
+    damageMaps: { exterior: { value: emptyDamageMap() }, interior: { value: emptyDamageMap() } },
+  };
+  const { fireTime, damageOn, quake, crackFloor } = materials;
+  addSurfaceFx(s.exterior, fireTime, s.damageMaps.exterior, damageOn, quake, crackFloor);
+  addSurfaceFx(s.interior, fireTime, s.damageMaps.interior, damageOn, quake, crackFloor);
+  materials.surfaces.set(name, s);
+  return s;
+}
+
+/** 판재 재질 (없으면 만든다) */
+export function paneMaterial(
+  materials: FragmentMaterials,
+  name: MaterialName,
+): MeshPhysicalMaterial {
+  const cached = materials.panes.get(name);
+  if (cached) return cached;
+  const spec = MATERIALS[name];
+  const m = new MeshPhysicalMaterial({
+    color: spec.exterior.color,
+    roughness: spec.exterior.roughness,
     metalness: GLASS.metalness,
     ior: GLASS.ior,
   });
-  setGlassMode(glass, glassMode);
-  return { exterior, interior, glass, fireTime, damageMaps, damageOn, quake, crackFloor };
+  setGlassMode(m, materials.glassMode);
+  materials.panes.set(name, m);
+  return m;
+}
+
+/** 지금까지 만든 재질 전부 */
+export function allFragmentMaterials(materials: FragmentMaterials): Material[] {
+  const all: Material[] = [];
+  for (const s of materials.surfaces.values()) all.push(s.exterior, s.interior);
+  for (const p of materials.panes.values()) all.push(p);
+  return all;
+}
+
+/** 모든 판재의 표시 방식을 바꾼다 */
+export function setPaneMode(materials: FragmentMaterials, mode: GlassMode): void {
+  materials.glassMode = mode;
+  for (const p of materials.panes.values()) setGlassMode(p, mode);
 }
 
 /**
@@ -380,40 +471,41 @@ export class FragmentMeshes {
   damageUploads = 0;
 
   constructor(frags: readonly Fragment[], materials: FragmentMaterials) {
-    const exterior: Part[] = [];
-    const interior: Part[] = [];
-    const glass: Part[] = [];
-    for (const frag of frags) {
-      if (isPane(frag)) {
-        exterior.push(null);
-        interior.push(null);
-        glass.push(wholeGeometry(frag));
-      } else {
-        const split = splitByMaterial(frag);
-        exterior.push(split.exterior);
-        interior.push(split.interior);
-        glass.push(null);
+    // 재질 id 순서로 (office: 콘크리트 외면, 단면, 유리 — 예전과 같은 순서)
+    const groups: { parts: Part[]; material: Material; holder: DamageMapHolder | null }[] = [];
+    const used = [...new Set(frags.map((f) => f.material))].sort((a, b) => a - b);
+    for (const id of used) {
+      const name = materialName(id);
+      if (MATERIALS[name].pane) {
+        groups.push({
+          parts: frags.map((f) => (f.material === id ? wholeGeometry(f) : null)),
+          material: paneMaterial(materials, name),
+          holder: null,
+        });
+        continue;
       }
+      const s = surfaceMaterials(materials, name);
+      const split = frags.map((f) => (f.material === id ? splitByMaterial(f) : null));
+      groups.push({
+        parts: split.map((x) => x?.exterior ?? null),
+        material: s.exterior,
+        holder: s.damageMaps.exterior,
+      });
+      groups.push({
+        parts: split.map((x) => x?.interior ?? null),
+        material: s.interior,
+        holder: s.damageMaps.interior,
+      });
     }
 
     this.slots = frags.map(() => []);
     this.tint = new Float32Array(frags.length * 4).fill(1);
     this.base = new Float32Array(frags.length * 3).fill(1);
     const matrix = new Matrix4();
-    for (const [parts, material] of [
-      [exterior, materials.exterior],
-      [interior, materials.interior],
-      [glass, materials.glass],
-    ] as const) {
+    for (const { parts, material, holder } of groups) {
       const batch = createBatch(parts, material);
       if (!batch) continue;
       this.batches.push(batch.mesh);
-      const holder =
-        material === materials.exterior
-          ? materials.damageMaps.exterior
-          : material === materials.interior
-            ? materials.damageMaps.interior
-            : null;
       if (holder) {
         const size = Math.max(1, Math.ceil(Math.sqrt(batch.mesh.maxInstanceCount)));
         const data = new Float32Array(size * size * 4);

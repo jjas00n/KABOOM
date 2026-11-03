@@ -28,6 +28,8 @@ export interface Assets {
   sky: Texture;
   /** 조명/반사용 PMREM 환경맵 */
   environment: Texture;
+  /** 재질 텍스처 폴더 하나 (처음 부를 때 받고 캐시). 입문 건물 재질은 쓸 때만 받는다 */
+  surface(folder: string): Promise<PbrTextures>;
 }
 
 /** onProgress: 0 ~ 1 */
@@ -70,5 +72,17 @@ export async function loadAssets(
   const pmrem = new PMREMGenerator(renderer);
   const environment = pmrem.fromEquirectangular(sky).texture;
   pmrem.dispose();
-  return { exterior, interior, ground, sky, environment };
+  const surfaces = new Map<string, Promise<PbrTextures>>([
+    [TEXTURES.exterior, Promise.resolve(exterior)],
+    [TEXTURES.interior, Promise.resolve(interior)],
+  ]);
+  const surface = (folder: string): Promise<PbrTextures> => {
+    let p = surfaces.get(folder);
+    if (!p) {
+      p = pbr(folder, true);
+      surfaces.set(folder, p);
+    }
+    return p;
+  };
+  return { exterior, interior, ground, sky, environment, surface };
 }

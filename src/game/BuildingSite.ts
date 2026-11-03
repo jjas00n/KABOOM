@@ -32,8 +32,9 @@ import { FractureAborted, fractureInWorker } from '../fracture/FractureJob';
 import { materialId, type Fragment } from '../fracture/Fragment';
 import {
   createFragmentMaterials,
+  loadSurfaceTextures,
   resetDamageMaps,
-  setGlassMode,
+  setPaneMode,
   type FragmentMaterials,
 } from '../fracture/FragmentMeshes';
 import type { Aabb } from '../fracture/polyhedron';
@@ -151,7 +152,7 @@ export class BuildingSite {
     private readonly scene: Scene,
     private readonly physics: PhysicsWorld,
     private readonly loading: LoadingOverlay,
-    assets: Assets | null = null,
+    private readonly assets: Assets | null = null,
     private readonly ground: PhysicsBody | null = null,
     private readonly time: TimeControl | null = null,
   ) {
@@ -172,10 +173,10 @@ export class BuildingSite {
   }
 
   applyGlassMode(): void {
-    setGlassMode(this.materials.glass, this.glassMode);
+    setPaneMode(this.materials, this.glassMode);
   }
 
-  /** 조각 재질 3종 (엑스레이 화면이 잠깐 바꾼다) */
+  /** 조각 재질 묶음 (엑스레이 화면이 잠깐 바꾼다) */
   get fragmentMaterials(): FragmentMaterials {
     return this.materials;
   }
@@ -442,6 +443,12 @@ export class BuildingSite {
 
     const fracturing = new AbortController();
     this.fracturing = fracturing;
+    // 이 건물 재질의 텍스처 (처음 쓰는 재질만 받는다). 분할과 같이 기다린다
+    const textures = loadSurfaceTextures(
+      this.materials,
+      this.assets,
+      new Set(members.map((m) => m.material)),
+    );
     const frags = await fractureInWorker(
       { jobs },
       (done, total) =>
@@ -452,6 +459,7 @@ export class BuildingSite {
       fracturing.signal,
     );
     if (this.fracturing === fracturing) this.fracturing = null;
+    await textures;
     if (generation !== this.generation) return false;
 
     this.loading.progress(FRACTURE_PROGRESS_SHARE, `Building ${frags.length} fragments…`);
