@@ -68,6 +68,15 @@ export class ColliderOverlay {
     this.acc = Infinity; // 켜자마자 갱신
   }
 
+  /** 건물을 버릴 때: 그려 둔 와이어프레임을 비운다 */
+  clear(): void {
+    for (const l of [this.wire, this.marks]) {
+      l.geometry.dispose();
+      l.geometry = new BufferGeometry();
+    }
+    this.acc = Infinity;
+  }
+
   /** 렌더 프레임마다 (실제 시간). 켜져 있을 때만 일한다. 반환: 이번에 검사했으면 그 결과 */
   update(dt: number, system: DestructionSystem | null): InvariantReport | null {
     if (!this.enabled) return null;

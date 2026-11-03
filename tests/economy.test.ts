@@ -127,6 +127,38 @@ describe('Economy', () => {
     onReleased: null as ((frags: readonly number[]) => void) | null,
   });
 
+  it('applies the order terms: reward multiplier, completion bonus and glass price scale', () => {
+    const plain = new Economy();
+    plain.attach(source(), nodes(10), 1);
+    const eco = new Economy();
+    eco.setOrder({ multiplier: 1.5, bonusFraction: 0.4, priceScale: { glass: 0.5 } });
+    expect(eco.modifiers.total).toBe(1.5);
+    eco.attach(source(), nodes(10), 1);
+    const a = plain.ledger!;
+    const b = eco.ledger!;
+    expect(b.baseValue[1]).toBe(a.baseValue[1]); // 콘크리트는 그대로
+    expect(b.baseValue[2]).toBeCloseTo(
+      Math.max(10 * ECONOMY.pricePerKg.glass! * 0.5, ECONOMY.minValue),
+    );
+    const paid = eco.release([1, 2, 3]);
+    expect(paid!.count).toBe(3);
+    expect(b.paidCount).toBe(3);
+    expect(eco.release([1])!.count).toBe(0);
+    expect(b.paidCount).toBe(3);
+    const bonus = eco.payCompletionBonus(); // 주문 비율
+    expect(bonus).toBeCloseTo(b.totalValue * 1.5 * 0.4);
+    expect(eco.wallet.building.bonus).toBeCloseTo(bonus);
+  });
+
+  it('wallet restore keeps money and lifetime, and clears the building income', () => {
+    const eco = new Economy();
+    eco.wallet.add(50, 'fragments');
+    eco.wallet.restore(1200, 3000);
+    expect(eco.wallet.money).toBe(1200);
+    expect(eco.wallet.lifetimeEarned).toBe(3000);
+    expect(eco.wallet.buildingTotal).toBe(0);
+  });
+
   it('pays through the release event, separates finale income, and unsubscribes on detach', () => {
     const eco = new Economy();
     const src = source();

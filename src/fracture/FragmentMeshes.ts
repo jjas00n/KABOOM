@@ -61,6 +61,14 @@ function emptyDamageMap(): DataTexture {
   return t;
 }
 
+/** 건물을 버릴 때: 조각별 damage 텍스처를 해제하고 1×1 빈 텍스처로 되돌린다 */
+export function resetDamageMaps(materials: FragmentMaterials): void {
+  for (const holder of [materials.damageMaps.exterior, materials.damageMaps.interior]) {
+    holder.value.dispose();
+    holder.value = emptyDamageMap();
+  }
+}
+
 /** 단면 지오메트리의 원래 자리 월드 좌표 속성 (트라이플래너 입력) */
 export const REST_ATTRIBUTE = 'rest';
 

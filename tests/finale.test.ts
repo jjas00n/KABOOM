@@ -63,7 +63,7 @@ describe('Completion', () => {
 });
 
 describe('StateMachine finale states', () => {
-  it('enters FINALE only from IMPACT or SPECTATE, then RESULT, then IDLE', () => {
+  it('enters FINALE only from IMPACT or SPECTATE, then RESULT, then ORDER_BOARD', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     for (const from of Object.values(GameState)) {
       const fsm = new StateMachine(from);
@@ -74,7 +74,8 @@ describe('StateMachine finale states', () => {
     expect(fsm.transition(GameState.FINALE)).toBe(true);
     expect(fsm.transition(GameState.SPECTATE)).toBe(false); // 피날레 도중 되돌아가지 않는다
     expect(fsm.transition(GameState.RESULT)).toBe(true);
-    expect(fsm.transition(GameState.IDLE)).toBe(true);
+    expect(fsm.transition(GameState.IDLE)).toBe(false); // 결과 다음은 게시판
+    expect(fsm.transition(GameState.ORDER_BOARD)).toBe(true);
     warn.mockRestore();
   });
 });

@@ -3,8 +3,9 @@
 //   - 피날레(7-2): releaseFinale로 따로 들어온다 (출처가 'finale'로 분리된다)
 //   - 파괴율: CollapseSolver 갱신 주기(solveIntervalSec)마다만 갱신 (매 프레임 X)
 // 물리·렌더를 import하지 않는다. 팝업 등 연출은 onPayout을 구독한다.
-import { ECONOMY, STRUCTURE } from '../config';
+import { ECONOMY, FINALE, STRUCTURE } from '../config';
 import { BuildingLedger, type LedgerNodes, type Payout } from './BuildingLedger';
+import type { PriceScale } from './FragmentValue';
 import { Modifiers } from './Modifiers';
 import { Wallet, type IncomeSource } from './Wallet';
 
@@ -14,6 +15,21 @@ export interface ReleaseSource {
   readonly positions: ArrayLike<number>;
   onReleased: ((frags: readonly number[]) => void) | null;
 }
+
+/** 지금 주문의 보상 조건 (7-3). setOrder로 바꾸고, 다음 attach부터 장부에 반영된다 */
+export interface OrderTerms {
+  /** 주문 배율 (Modifiers 'order') */
+  multiplier: number;
+  /** 완료 보너스 = 건물 전체 가치 × 이 값 */
+  bonusFraction: number;
+  /** 재질 단가 배율 (주문 특징) */
+  priceScale?: PriceScale;
+}
+
+export const DEFAULT_TERMS: OrderTerms = {
+  multiplier: ECONOMY.orderMultiplier,
+  bonusFraction: FINALE.completionBonusFraction,
+};
 
 export type PayoutListener = (
   x: number,
@@ -35,17 +51,25 @@ export class Economy {
   onPayout: PayoutListener | null = null;
   /** 희귀 파편 사용 여부 (다음 건물부터) */
   rareEnabled: boolean = ECONOMY.rareEnabled;
+  /** 지금 주문의 보상 조건 */
+  terms: OrderTerms = DEFAULT_TERMS;
 
   private source: ReleaseSource | null = null;
   private acc = 0;
   /** 성능 측정: 지난 consumeCostMs 이후 지급 처리에 쓴 시간 (ms) */
   private costMs = 0;
 
+  /** 주문 보상 조건: 배율은 바로, 단가 배율은 다음 attach부터 */
+  setOrder(terms: OrderTerms): void {
+    this.terms = terms;
+    this.modifiers.set('order', terms.multiplier);
+  }
+
   /** 새 건물: 장부를 만들고 분리 이벤트를 구독한다. 이번 건물 수익은 0부터 */
   attach(source: ReleaseSource, nodes: LedgerNodes, seed: number): BuildingLedger {
     this.detach();
     this.source = source;
-    this.ledger = new BuildingLedger(nodes, seed, this.rareEnabled);
+    this.ledger = new BuildingLedger(nodes, seed, this.rareEnabled, this.terms.priceScale);
     this.wallet.startBuilding();
     this.destructionRate = 0;
     this.acc = 0;
@@ -97,8 +121,8 @@ export class Economy {
     return this.release(frags, 'finale', true);
   }
 
-  /** 완료 보너스: 건물 전체 가치 × fraction × 배율 (7-3 주문 보상 자리). 반환: 지급액 */
-  payCompletionBonus(fraction: number): number {
+  /** 완료 보너스: 건물 전체 가치 × fraction(기본: 주문 조건) × 배율. 반환: 지급액 */
+  payCompletionBonus(fraction: number = this.terms.bonusFraction): number {
     const ledger = this.ledger;
     if (!ledger) return 0;
     const amount = ledger.totalValue * this.modifiers.total * fraction;

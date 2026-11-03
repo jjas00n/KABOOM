@@ -1,5 +1,7 @@
-// 게임: 건물 + 발사대(대포·마법사) + 발사체 + 카메라를 상태 머신(StateMachine)으로 잇는다.
+// 게임: 주문 게시판 + 건물 + 발사대(대포·마법사) + 발사체 + 카메라를 상태 머신(StateMachine)으로 잇는다.
 // 모든 단계는 fsm.launcher(지금 고른 발사대) 기준으로 동작한다.
+//   ORDER_BOARD     철거 의뢰 카드 3장 (게시판 seed로 결정). 이전 건물은 여기 들어올 때 전부 해제된다
+//   LOADING         고른 주문의 건물 생성 (진행률 바). 끝나면 IDLE, 실패하면 게시판으로
 //   IDLE            건물 전경을 천천히 돈다 (드래그로 둘러보기). [Cannon] [Wizard]
 //   CUTSCENE        발사대가 등장하고 카메라가 건물 → 발사대 뒤로 날아간다. 클릭/Space 스킵
 //   AIMING          드래그/WASD 조준, 휠/QE 파워, 예상 궤적 점선. Space/클릭 발사
@@ -7,10 +9,11 @@
 //   PROJECTILE_CAM  체이스 캠. 처음 부딪힌 곳에서 IMPACT (아무것도 안 맞으면 SPECTATE)
 //   IMPACT          대포: 관통 폭발(+킬캠), 파이어볼: 화염 폭발 + 화재. hit-stop + 흔들림
 //   SPECTATE        충돌 지점 자동 회전 → 자유 관람 (화재면 불 중심을 따라 줌아웃).
-//                   [Cannon]/[Wizard] 재발사 / [Back] 처음 화면 / [Reset] 건물 재생성
+//                   [Cannon]/[Wizard] 재발사 / [Back] 처음 화면 / [Abandon order] 의뢰 포기 → 게시판
 //   FINALE          파괴율이 임계값에 처음 닿으면 (IMPACT·SPECTATE 중, 건물당 1회) 남은 건물을 한꺼번에.
 //                   정산 + 'DEMOLISHED!' + 붕괴 웨이브 + 시네마틱 카메라 (FinaleDirector). 클릭/Space 스킵
-//   RESULT          이번 건물 수익·발사 수·시간·최대 연쇄. [Next order] → 새 건물 (IDLE)
+//   RESULT          이번 건물 수익·발사 수·시간·최대 연쇄. [Next order] → 게시판
+// 지갑·누적 통계·게시판 seed·품질은 저장된다 (의뢰 수락·완료·포기, 설정 변경, 탭 숨김).
 import { Vector3, type PointLight } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { AimCam } from '../camera/AimCam';
@@ -30,6 +33,7 @@ import {
   PROJECTILE,
   SANDBOX,
   XRAY,
+  type QualityPreset,
 } from '../config';
 import type { Assets } from '../core/Assets';
 import type { Renderer } from '../core/Renderer';
@@ -41,9 +45,16 @@ import { Completion } from '../economy/Completion';
 import { Economy } from '../economy/Economy';
 import { MATERIAL } from '../fracture/Fragment';
 import { MoneyPopups } from '../fx/MoneyPopups';
+import { Career } from '../orders/Career';
+import type { Order } from '../orders/Order';
+import { generateBoard } from '../orders/OrderGenerator';
+import { defaultSave, type SaveData } from '../save/SaveData';
+import type { SaveStore } from '../save/SaveStore';
 import { EconomyHud } from '../ui/EconomyHud';
 import { HUD } from '../ui/HUD';
 import type { LoadingOverlay } from '../ui/LoadingOverlay';
+import { OrderBoard } from '../ui/OrderBoard';
+import { OrderThumbnails } from '../ui/OrderThumbnails';
 import { muzzleSpeed } from './ballistics';
 import { penetrationBlasts, penetrationDepth, type Blast } from './penetration';
 import { BuildingSite } from './BuildingSite';
@@ -74,12 +85,18 @@ const AIM_KEYS = {
 
 export class Game {
   readonly site: BuildingSite;
-  readonly fsm = new StateMachine(GameState.IDLE);
+  readonly fsm = new StateMachine(GameState.ORDER_BOARD);
   readonly rig: CameraRig;
   readonly launchers: Record<LauncherId, Launcher>;
   readonly stage: Stage;
-  /** 건물이 준비됐는지 (생성 중엔 발사대 못 씀) */
-  ready = false;
+  /** 지금 게시판의 주문 3장 (의뢰를 받으면 비우고, 게시판에 돌아올 때 다음 seed로 만든다) */
+  board: Order[] = [];
+  /** 지금 진행 중인 주문 (게시판에선 null) */
+  currentOrder: Order | null = null;
+  /** 누적 통계 (저장된다) */
+  readonly career: Career;
+  private saveData: SaveData;
+  private readonly orderBoard: OrderBoard;
 
   /** 발사대별 발사체 (대포탄 / 파이어볼) */
   private readonly projectiles: Record<LauncherId, Projectile>;
@@ -152,11 +169,16 @@ export class Game {
     private readonly time: TimeControl,
     loading: LoadingOverlay,
     assets: Assets | null = null,
+    private readonly saves: SaveStore | null = null,
   ) {
     const { scene, camera, canvas } = renderer;
+    this.saveData = saves?.load() ?? defaultSave();
+    this.career = new Career(this.saveData.career);
+    this.economy.wallet.restore(this.saveData.wallet.money, this.saveData.wallet.lifetimeEarned);
     this.postfx = renderer.postfx;
     this.stage = new Stage(renderer, physics, assets);
     this.site = new BuildingSite(scene, physics, loading, assets, this.stage.ground, time);
+    this.site.settings.quality = this.saveData.settings.quality;
     const cannon = new Cannon(scene, this.buildingCenter);
     const wizard = new Wizard(scene, this.buildingCenter, this.site.effects.fire, this.site.lights);
     this.launchers = { cannon, wizard };
@@ -201,13 +223,20 @@ export class Game {
     this.hud = new HUD(
       (id) => this.requestLauncher(id),
       () => this.requestIdle(),
-      () => this.requestReset(),
+      () => this.abandon(),
+    );
+    this.orderBoard = new OrderBoard(
+      new OrderThumbnails(renderer.webgl),
+      (order) => this.pickOrder(order),
+      (q) => this.setQuality(q),
     );
 
     this.bindStates();
     this.bindInput(canvas);
-    this.enterIdle();
-    this.rebuild();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') this.persist();
+    });
+    this.enterOrderBoard();
   }
 
   get state(): GameState {
@@ -299,16 +328,93 @@ export class Game {
     this.rig.update(dt);
   }
 
-  /** 디버그 GUI Reset/Regenerate: 건물을 새로 만든다 */
+  /** 디버그 GUI Reset/Regenerate: 지금 설정으로 건물을 새로 만든다 (주문은 유지, IDLE·SPECTATE에서만) */
   reset(): void {
-    if (this.fsm.is(GameState.SPECTATE)) this.fsm.transition(GameState.IDLE);
-    this.rebuild();
+    if (this.fsm.can(GameState.LOADING)) this.fsm.transition(GameState.LOADING);
+  }
+
+  // ── 주문 · 저장 ─────────────────────────────────────────
+
+  /**
+   * 게시판에서 카드를 골랐다. 게시판 seed는 바로 다음으로 넘기고 저장한다
+   * (의뢰 도중 새로고침 = 포기: 같은 의뢰를 다시 받아 반복해서 벌 수 없다).
+   */
+  pickOrder(order: Order): void {
+    if (!this.fsm.is(GameState.ORDER_BOARD)) return;
+    this.currentOrder = order;
+    this.saveData.boardSeed++;
+    this.board = [];
+    this.persist();
+    this.site.applyOrder(order);
+    this.economy.setOrder({
+      multiplier: order.rewardMultiplier,
+      bonusFraction: order.completionBonus,
+      priceScale: order.priceScale,
+    });
+    this.fsm.transition(GameState.LOADING);
+  }
+
+  /** 의뢰 포기: 그때까지 번 파편 수익은 유지, 완료 보너스 없음 → 게시판 */
+  abandon(): void {
+    if (!this.fsm.is(GameState.IDLE, GameState.SPECTATE)) return;
+    this.career.recordAbandoned(this.economy.ledger?.paidCount ?? 0);
+    this.currentOrder = null;
+    this.fsm.transition(GameState.ORDER_BOARD);
+    this.persist();
+  }
+
+  /** 지갑·통계·게시판 seed·설정을 저장한다 */
+  persist(): void {
+    const w = this.economy.wallet;
+    const d = this.saveData;
+    d.wallet = { money: w.money, lifetimeEarned: w.lifetimeEarned };
+    d.career = this.career.data;
+    d.settings = { quality: this.site.settings.quality };
+    this.saves?.save(d);
+  }
+
+  /** 품질 설정 변경 (게시판·디버그 GUI): 다음 건물부터 */
+  setQuality(q: QualityPreset): void {
+    this.site.settings.quality = q;
+    this.persist();
+    if (this.fsm.is(GameState.ORDER_BOARD)) this.showBoard();
+  }
+
+  /** 디버그: 저장을 지우고 새 게임 상태로 (진행 중인 건물은 그대로) */
+  resetSave(): void {
+    this.saves?.clear();
+    this.saveData = defaultSave();
+    this.career.data = this.saveData.career;
+    this.economy.wallet.restore(0, 0);
+    this.site.settings.quality = this.saveData.settings.quality;
+    this.board = [];
+    if (this.fsm.is(GameState.ORDER_BOARD)) this.showBoard();
+  }
+
+  private showBoard(): void {
+    if (this.board.length === 0) this.board = generateBoard(this.saveData.boardSeed);
+    this.orderBoard.show({
+      orders: this.board,
+      quality: this.site.settings.quality,
+      money: this.economy.wallet.money,
+      career: this.career.data,
+    });
+  }
+
+  /** 게시판: 이전 건물을 전부 해제하고 빈 부지를 천천히 돈다 */
+  private enterOrderBoard(): void {
+    this.teardownBuilding();
+    this.enterIdle();
+    this.showBoard();
   }
 
   // ── 상태 전이 ───────────────────────────────────────────
 
   private bindStates(): void {
     const { fsm } = this;
+    fsm.onEnter(GameState.ORDER_BOARD, () => this.enterOrderBoard());
+    fsm.onExit(GameState.ORDER_BOARD, () => this.orderBoard.hide());
+    fsm.onEnter(GameState.LOADING, () => this.load());
     fsm.onEnter(GameState.IDLE, () => this.enterIdle());
     fsm.onEnter(GameState.CUTSCENE, () => this.enterCutscene());
     fsm.onEnter(GameState.AIMING, () => {
@@ -347,7 +453,11 @@ export class Game {
     fsm.onEnter(GameState.FINALE, () => this.enterFinale());
     fsm.onEnter(GameState.RESULT, () => {
       const w = this.economy.wallet;
+      const title = this.currentOrder?.name ?? 'Building';
+      this.career.recordCompleted(title, w.buildingTotal, this.economy.ledger?.paidCount ?? 0);
+      this.persist();
       this.finale.showResult({
+        title,
         income: { ...w.building },
         total: w.buildingTotal,
         shots: { ...this.runStats.shots },
@@ -355,8 +465,8 @@ export class Game {
         maxChain: this.runStats.maxChain,
       });
     });
-    fsm.onChange((_from, to) => this.hud.setState(to, this.ready));
-    this.hud.setState(fsm.state, this.ready);
+    fsm.onChange((_from, to) => this.hud.setState(to));
+    this.hud.setState(fsm.state);
   }
 
   private enterIdle(): void {
@@ -505,13 +615,11 @@ export class Game {
     this.finale.start(this.buildingCenter);
   }
 
-  /** 결과 화면 '다음 주문': 다른 seed로 새 건물 (7-3에서 주문 게시판으로) */
-  private nextOrder(): void {
+  /** 결과 화면 '다음 주문': 게시판으로 */
+  nextOrder(): void {
     if (!this.fsm.is(GameState.RESULT)) return;
-    this.site.settings.seed += 1;
-    this.hideLaunchers();
-    this.fsm.transition(GameState.IDLE);
-    this.rebuild();
+    this.currentOrder = null;
+    this.fsm.transition(GameState.ORDER_BOARD);
   }
 
   /**
@@ -623,8 +731,8 @@ export class Game {
     }
   }
 
-  private requestLauncher(id: LauncherId): void {
-    if (this.ready && this.fsm.is(GameState.IDLE, GameState.SPECTATE)) {
+  requestLauncher(id: LauncherId): void {
+    if (this.fsm.is(GameState.IDLE, GameState.SPECTATE)) {
       this.fsm.transition(GameState.CUTSCENE, id);
     }
   }
@@ -634,12 +742,6 @@ export class Game {
     if (!this.fsm.is(GameState.SPECTATE)) return;
     this.hideLaunchers();
     this.fsm.transition(GameState.IDLE);
-  }
-
-  private requestReset(): void {
-    if (!this.fsm.is(GameState.SPECTATE)) return;
-    this.fsm.transition(GameState.IDLE);
-    this.rebuild();
   }
 
   private hideLaunchers(): void {
@@ -652,16 +754,40 @@ export class Game {
     this.fsm.transition(GameState.AIMING);
   }
 
-  /** 건물 재생성. 끝나면 ready + 충돌 훅 연결 + 카메라 중심 갱신 */
-  private rebuild(): void {
-    this.ready = false;
+  /**
+   * 지금 건물과 그 건물에 걸린 것(발사체·관통·킬캠·라이트·장부·팝업·피날레)을 전부 놓는다.
+   * GPU·물리·화재·파티클·워커 자원 해제는 BuildingSite.teardown.
+   */
+  private teardownBuilding(): void {
+    this.projectiles.cannon.remove();
+    this.projectiles.wizard.remove();
+    this.projectiles.cannon.mesh.visible = false;
+    this.killCam.stop();
+    this.releaseFireballLight();
+    this.chargeLeft = -1;
+    this.blasts = [];
+    this.nextBlast = 0;
+    this.pendingHit = null;
+    this.trajectory.visible = false;
     this.hideLaunchers();
-    this.hud.setState(this.fsm.state, this.ready);
     this.economy.detach();
+    this.economy.destructionRate = 0;
     this.popups.clear();
     this.finale.reset();
+    this.site.teardown();
+    this.buildingCenter.set(0, 0, 0);
+  }
+
+  /** LOADING: 건물 생성. 끝나면 충돌 훅 연결 + 장부 + 카메라 중심 갱신 → IDLE (실패하면 게시판) */
+  private load(): void {
+    this.teardownBuilding();
     void this.site.reset().then((ok) => {
-      if (!ok) return;
+      if (!this.fsm.is(GameState.LOADING)) return;
+      if (!ok) {
+        this.currentOrder = null;
+        this.fsm.transition(GameState.ORDER_BOARD);
+        return;
+      }
       const { footprint, height } = this.site;
       if (footprint) {
         this.buildingCenter.set(
@@ -674,9 +800,7 @@ export class Game {
       this.attachEconomy();
       this.completion.arm();
       this.runStats.start();
-      this.ready = true;
-      if (this.fsm.is(GameState.IDLE)) this.enterIdle(); // 새 건물 중심으로
-      this.hud.setState(this.fsm.state, this.ready);
+      this.fsm.transition(GameState.IDLE); // 새 건물 중심으로 돈다
     });
   }
 
@@ -760,7 +884,7 @@ export class Game {
       if (!p || e.button !== 0) return;
       const moved = Math.hypot(e.clientX - p.startX, e.clientY - p.startY);
       if (moved > SANDBOX.clickDragThresholdPx) return; // 드래그였음
-      this.onPrimaryAction();
+      this.primaryAction();
     });
     canvas.addEventListener(
       'wheel',
@@ -777,13 +901,13 @@ export class Game {
       if (e.repeat) return; // 꾹 누르고 있어도 스킵 → 발사가 연달아 일어나지 않게
       if (e.code === 'Space') {
         e.preventDefault();
-        this.onPrimaryAction();
+        this.primaryAction();
       } else if (e.code === 'KeyC') {
         this.requestLauncher('cannon');
       } else if (e.code === 'KeyF') {
         this.requestLauncher('wizard');
-      } else if (e.code === 'KeyR') {
-        this.requestReset();
+      } else if (e.code === 'KeyR' && import.meta.env.DEV) {
+        this.reset(); // 개발 중에만: 지금 건물 재생성
       } else if (e.code === 'Escape') {
         this.requestIdle();
       }
@@ -792,8 +916,8 @@ export class Game {
     window.addEventListener('blur', () => this.keys.clear());
   }
 
-  /** 클릭 / Space: 컷신·킬캠·피날레 스킵 또는 발사 */
-  private onPrimaryAction(): void {
+  /** 클릭 / Space: 컷신·킬캠·피날레 스킵 또는 발사 (메모리 soak 자동화도 이걸 누른다) */
+  primaryAction(): void {
     if (this.killCam.active) this.killCam.skip();
     else if (this.fsm.is(GameState.CUTSCENE)) this.skipCutscene();
     else if (this.fsm.is(GameState.AIMING) && this.chargeLeft < 0) this.pullTrigger();

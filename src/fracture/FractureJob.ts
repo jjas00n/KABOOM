@@ -9,24 +9,43 @@ export type FractureMessage =
   | { type: 'done'; result: PackedFragments }
   | { type: 'error'; message: string };
 
+/** signal이 abort되면 워커를 바로 끝내고 이 에러로 reject한다 (건물 교체·포기) */
+export class FractureAborted extends Error {
+  constructor() {
+    super('fracture aborted');
+    this.name = 'FractureAborted';
+  }
+}
+
 export function fractureInWorker(
   request: FractureRequest,
   onProgress?: (done: number, total: number) => void,
+  signal?: AbortSignal,
 ): Promise<Fragment[]> {
+  if (signal?.aborted) return Promise.reject(new FractureAborted());
   const worker = new Worker(new URL('./fracture.worker.ts', import.meta.url), { type: 'module' });
   return new Promise<Fragment[]>((resolve, reject) => {
+    const finish = () => {
+      worker.terminate();
+      signal?.removeEventListener('abort', abort);
+    };
+    const abort = () => {
+      finish();
+      reject(new FractureAborted());
+    };
+    signal?.addEventListener('abort', abort);
     worker.onmessage = (e: MessageEvent<FractureMessage>) => {
       const msg = e.data;
       if (msg.type === 'progress') {
         onProgress?.(msg.done, msg.total);
         return;
       }
-      worker.terminate();
+      finish();
       if (msg.type === 'done') resolve(unpackFragments(msg.result));
       else reject(new Error(msg.message));
     };
     worker.onerror = (e) => {
-      worker.terminate();
+      finish();
       reject(new Error(e.message));
     };
     worker.postMessage(

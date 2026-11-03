@@ -1,8 +1,8 @@
 // 건물 한 채의 장부: 조각별 바탕 가치, 지급 여부, 파괴율. 순수 로직 (물리·렌더 모름).
 //   - 조각마다 한 번만 지급한다 (paid). 같은 조각이 다시 깨어나 dynamic이 돼도 0
 //   - 파괴율 = 분리된(지급된) 질량 / 가치 있는 조각의 전체 질량 (기초 등 단가 0인 조각은 분모에서도 빠진다)
-import { DURABILITY } from '../config';
-import { fragmentValue, rollRare, unitPrice } from './FragmentValue';
+import { DURABILITY, ECONOMY } from '../config';
+import { fragmentValue, rollRare, unitPrice, type PriceScale } from './FragmentValue';
 
 export interface LedgerNodes {
   count: number;
@@ -39,17 +39,20 @@ export class BuildingLedger {
   paidMass = 0;
   /** 지급액 합 (배율 적용 후, $) */
   paidAmount = 0;
+  /** 지급(분리)된 조각 수 */
+  paidCount = 0;
   /** 대상 조각 바탕 가치 합 (배율 전, $): 완료 보너스 기준 */
   readonly totalValue: number;
 
-  constructor(nodes: LedgerNodes, seed: number, rareEnabled?: boolean) {
+  /** priceScale: 주문 특징의 재질 단가 배율 */
+  constructor(nodes: LedgerNodes, seed: number, rareEnabled?: boolean, priceScale?: PriceScale) {
     const n = nodes.count;
     this.mass = Float64Array.from({ length: n }, (_, i) => nodes.mass[i]!);
     this.counted = new Uint8Array(n);
     this.paid = new Uint8Array(n);
     let total = 0;
     for (let i = 0; i < n; i++) {
-      if (unitPrice(nodes.kind(i), nodes.material(i)) <= 0) continue;
+      if (unitPrice(nodes.kind(i), nodes.material(i), ECONOMY, priceScale) <= 0) continue;
       this.counted[i] = 1;
       total += this.mass[i]!;
     }
@@ -58,7 +61,15 @@ export class BuildingLedger {
     this.baseValue = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       this.baseValue[i] =
-        fragmentValue(this.mass[i]!, nodes.kind(i), nodes.material(i), 1, this.rare[i] === 1) *
+        fragmentValue(
+          this.mass[i]!,
+          nodes.kind(i),
+          nodes.material(i),
+          1,
+          this.rare[i] === 1,
+          ECONOMY,
+          priceScale,
+        ) *
         (1 + DURABILITY.valuePerPoint * (nodes.durability?.(i) ?? 0));
     }
     let value = 0;
@@ -87,6 +98,7 @@ export class BuildingLedger {
       each?.(i, amount);
     }
     this.paidAmount += out.amount;
+    this.paidCount += out.count;
     return out;
   }
 

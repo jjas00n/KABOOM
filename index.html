@@ -328,6 +328,112 @@
         width: 0;
         background: #e8a33c;
       }
+      .hud-button-abandon.confirm {
+        background: #b42318;
+        color: #fff;
+      }
+      .board {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: min(960px, calc(100vw - 32px));
+        max-height: calc(100vh - 32px);
+        overflow: auto;
+        padding: 20px 22px;
+        border-radius: 14px;
+        background: rgb(20 20 24 / 0.9);
+        color: #f2f2f2;
+        font:
+          500 14px/1.5 system-ui,
+          sans-serif;
+        box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+      }
+      .board-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .board-title {
+        font-size: 22px;
+        font-weight: 800;
+        color: #ffd25a;
+      }
+      .board-quality select {
+        margin-left: 6px;
+        font: inherit;
+      }
+      .board-summary {
+        margin: 4px 0 14px;
+        color: #c8c8c8;
+        font-variant-numeric: tabular-nums;
+      }
+      .board-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 14px;
+      }
+      .board-card {
+        display: flex;
+        flex-direction: column;
+        padding: 12px;
+        border-radius: 10px;
+        background: rgb(255 255 255 / 0.06);
+        border-top: 3px solid #8fa3b0;
+      }
+      .board-card.tier-medium {
+        border-top-color: #e8a33c;
+      }
+      .board-card.tier-large {
+        border-top-color: #e5484d;
+      }
+      .board-thumb {
+        width: 100%;
+        aspect-ratio: 256 / 160;
+        border-radius: 6px;
+        background: #2a2d33;
+      }
+      .board-name {
+        margin-top: 8px;
+        font-size: 17px;
+        font-weight: 800;
+      }
+      .board-client {
+        color: #a8a8a8;
+        font-size: 12px;
+      }
+      .board-tags {
+        margin: 6px 0 2px;
+      }
+      .board-tag {
+        display: inline-block;
+        margin-right: 6px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        background: rgb(255 255 255 / 0.12);
+      }
+      .board-tag.trait {
+        background: #3b4a6b;
+      }
+      .board-trait {
+        color: #c8c8c8;
+        font-size: 12px;
+        margin-bottom: 6px;
+      }
+      .board-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+      .board-row span:first-child {
+        color: #a8a8a8;
+      }
+      .board-take {
+        margin-top: 10px;
+      }
     </style>
   </head>
   <body>

@@ -40,12 +40,26 @@
 
 ## 게임 흐름 (상태 머신)
 ```
+ORDER_BOARD ─[카드 선택]→ LOADING(진행률) ─(생성 끝)→ IDLE        (생성 실패 → ORDER_BOARD)
 IDLE ─[대포/마법사 버튼]→ CUTSCENE(launcher) ─(카메라 스플라인 비행 끝)→ AIMING
 AIMING ─[발사(마법사는 충전 0.6s 뒤)]→ PROJECTILE_CAM ─(충돌)→ IMPACT(hit-stop ~0.3s) → SPECTATE
 SPECTATE ─[대포/마법사 버튼]→ CUTSCENE (부서진·불타는 건물에 재발사 가능)
-SPECTATE ─[뒤로]→ IDLE (건물 유지),  SPECTATE ─[리셋]→ IDLE (건물 재생성)
-IMPACT·SPECTATE ─(파괴율 ≥ 85%, 건물당 1회)→ FINALE(완파 피날레 ~4s, 스킵 가능) → RESULT ─[다음 주문]→ IDLE (새 건물)
+SPECTATE ─[뒤로]→ IDLE (건물 유지)
+IDLE·SPECTATE ─[의뢰 포기]→ ORDER_BOARD (파편 수익 유지, 보너스 없음)
+IDLE·SPECTATE ─[디버그 재생성(GUI/dev R)]→ LOADING (같은 주문)
+IMPACT·SPECTATE ─(파괴율 ≥ 85%, 건물당 1회)→ FINALE(완파 피날레 ~4s, 스킵 가능) → RESULT ─[다음 주문]→ ORDER_BOARD
 ```
+- **주문 루프**(`src/orders/`, Phase 7-3): 게시판 seed 하나로 카드 3장(`OrderGenerator`, 결정적).
+  - 등급(소/중/대) = 규모·조각 예산·보상 배율·완료 보너스. `unlockedTiers`가 Phase 10 해금 자리.
+  - 특징(유리 많음/고층 슬림/저층 넓음/보강) = 모양·전략. 주문 보상 조건은 `Economy.setOrder`로 들어간다.
+  - 의뢰를 받는 순간 게시판 seed가 다음으로 넘어가고 저장된다 (의뢰 도중 새로고침 = 포기).
+  - ORDER_BOARD에 들어갈 때 이전 건물을 **전부 해제**한다 (`Game.teardownBuilding` → `BuildingSite.teardown`).
+    dev 디버그 GUI 'Memory' → 'Soak 10 orders'로 바디·콜라이더·geometry·texture 수가 첫 건물과 같은지 본다.
+  - HUD에 건물 리셋 버튼은 없다 (같은 의뢰를 다시 부숴 파편 수익을 반복하지 않게). 재생성은 디버그 전용.
+- **저장**(`src/save/`): localStorage, 버전 있는 스키마(`SaveData`) + 마이그레이션 체인(`migrations.ts`).
+  - 저장 내용: 지갑, 누적 통계(`orders/Career`), 게시판 seed, 품질.
+  - 어떤 실패에도 예외 없이 새 게임으로 시작한다. 틀린 필드만 기본값으로 바꾼다.
+  - 저장 시점: 의뢰 수락·완료·포기, 설정 변경, 탭 숨김.
 - **완파 피날레**(`game/Finale.ts` 정리·정산, `game/FinaleDirector.ts` 연출, `economy/Completion.ts` 1회 판정):
   - 남은 조각 가치를 'finale'로 한 번에 정산하고 완료 보너스를 준다.
   - 위→아래 웨이브로 분리한다 (스텝당 상한). 부피 큰 조각만 물리(동시 dynamic ≤ 1000), 나머지는 숨기고 GPU 파편(`fx/FinaleBurst.ts`)으로 대체한다.
@@ -95,14 +109,17 @@ src/
                FireSystem.ts(화재 확산·연소·약화, 순수 로직), DamageModel.ts(조각 손상도·자세·느슨 판정),
                DamageView.ts(손상 자세·텍스처 적용), Invariants.ts(불변 조건), Durability.ts(조각 내구도)
   economy/     Wallet.ts, Modifiers.ts, FragmentValue.ts, BuildingLedger.ts, Economy.ts, Completion.ts (순수 로직)
+  orders/      Order.ts, OrderGenerator.ts(게시판 seed → 카드 3장), Career.ts(누적 통계) (순수 로직)
+  save/        SaveData.ts(스키마·버전), migrations.ts, SaveStore.ts(localStorage, 실패해도 새 게임)
   game/        StateMachine.ts, Launcher.ts(발사대 인터페이스), Cannon.ts, Wizard.ts, fireball.ts,
                Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결),
                Finale.ts, FinaleDirector.ts, RunStats.ts (완파 피날레·결과)
   camera/      CutsceneCam.ts, AimCam.ts, ChaseCam.ts, SpectateCam.ts, CameraShake.ts
   fx/          Dust.ts, Sparks.ts, Fire.ts(불꽃·연기·불씨), FireballVisual.ts, LightPool.ts(고정 개수), Rebar.ts,
                MoneyPopups.ts(+$ 묶음 팝업), FinaleBurst.ts(피날레 GPU 파편), PostFX.ts
-  ui/          HUD(대포 버튼, 파워 게이지, 리셋, 품질 선택), EconomyHud(돈·이번 건물 수익·파괴율 바),
-               ResultScreen(완파 배너·결과 화면), 디버그 GUI
+  ui/          HUD(대포 버튼, 파워 게이지, 뒤로, 의뢰 포기), EconomyHud(돈·이번 건물 수익·파괴율 바),
+               ResultScreen(완파 배너·결과 화면), OrderBoard(주문 카드·품질 선택), OrderThumbnails(오프스크린 미리보기),
+               MemoryReport(dev 메모리 리포트·soak), 디버그 GUI
   audio/       AudioManager.ts
 tests/         vitest 단위 테스트
 ```
