@@ -11,7 +11,7 @@
 import { Vector3, type Scene } from 'three';
 import { StructureGraph, type NodeInfo } from '../building/StructureGraph';
 import { DAMAGE_VISUAL, DEBRIS, DURABILITY, EXPLOSION, STRUCTURE } from '../config';
-import { MATERIAL, type Fragment } from '../fracture/Fragment';
+import { isPane, type Fragment } from '../fracture/Fragment';
 import type { FragmentMaterials } from '../fracture/FragmentMeshes';
 import type { Vec3Like } from '../fracture/polyhedron';
 import { DEBRIS_GROUPS, DEFAULT_GROUPS } from '../physics/collisionGroups';
@@ -140,9 +140,7 @@ export class DestructionSystem {
       onDynamic: (chunk) => this.onDynamic(chunk),
     });
     this.damage = new DamageModel(this.graph, this.positions, this.solver.edgeDamage);
-    this.damage.ignoreNeighbors = Uint8Array.from(frags, (f) =>
-      f.material === MATERIAL.glass ? 1 : 0,
-    );
+    this.damage.ignoreNeighbors = Uint8Array.from(frags, (f) => (isPane(f) ? 1 : 0));
   }
 
   /** 손상도를 지금 구조로 다시 계산하고, 바뀐 노드를 알리고, 느슨한 조각을 대기열에 넣는다 */
@@ -292,13 +290,13 @@ export class DestructionSystem {
     }
   }
 
-  /** 반경 안의 서 있는 유리를 전부 구조에서 떼어낸다 */
+  /** 반경 안의 서 있는 판재(유리·크리스털)를 전부 구조에서 떼어낸다 */
   private shatterGlass(center: Vec3Like, radius: number): void {
     const r2 = radius * radius;
     const p = this.positions;
     const frags = this.fragments.fragments;
     for (let i = 0; i < this.graph.nodeCount; i++) {
-      if (!this.graph.attached[i] || frags[i]!.material !== MATERIAL.glass) continue;
+      if (!this.graph.attached[i] || !isPane(frags[i]!)) continue;
       const d2 =
         (p[i * 3]! - center.x) ** 2 +
         (p[i * 3 + 1]! - center.y) ** 2 +
@@ -367,8 +365,7 @@ export class DestructionSystem {
     this.debris.add(chunk.body, chunk.volume);
     if (this.onGlassBroken) {
       for (const i of chunk.frags) {
-        if (this.glassBroken[i] || this.fragments.fragments[i]!.material !== MATERIAL.glass)
-          continue;
+        if (this.glassBroken[i] || !isPane(this.fragments.fragments[i]!)) continue;
         this.glassBroken[i] = 1;
         this.onGlassBroken(this.fragments.fragments[i]!.centroid);
       }

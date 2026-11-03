@@ -26,6 +26,8 @@ interface Demo {
   setupGui?: (gui: GUI) => void;
   /** 개발 중 콘솔/자동화에서 만질 수 있게 노출할 객체 (window.__kaboom.handle) */
   handle?: unknown;
+  /** dev 전용 메모리 리포트 (window.__kaboom.memory, soak 자동화) */
+  memory?: unknown;
 }
 
 /**
@@ -67,6 +69,7 @@ function createGame(
     update: (dt) => game.update(dt),
     reset: () => game.reset(),
     handle: game,
+    memory,
     setupGui: (gui) => {
       const folder = gui.addFolder('Game');
       folder.add(game, 'state').name('State').disable().listen();
@@ -203,6 +206,7 @@ async function main(): Promise<void> {
       physics,
       demo: active,
       handle: active.handle,
+      memory: active.memory,
       loop,
       timer,
     };

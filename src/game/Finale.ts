@@ -9,10 +9,10 @@
 //   finishNow()    스킵: 남은 조각을 한 번에 같은 방식으로 정리
 // 내구도는 무시한다 (graph.detach 직접 — 직접 타격 경로가 아니다).
 import { Color, Vector3 } from 'three';
-import { CONCRETE, FINALE, GLASS } from '../config';
+import { FINALE, MATERIAL_NAMES, MATERIALS } from '../config';
 import type { DestructionSystem } from '../destruction/DestructionSystem';
 import type { Economy } from '../economy/Economy';
-import { MATERIAL } from '../fracture/Fragment';
+import { isPane } from '../fracture/Fragment';
 import type { Vec3Like } from '../fracture/polyhedron';
 import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 
@@ -29,8 +29,8 @@ export interface FinaleReward {
   bonus: number;
 }
 
-const CONCRETE_COLOR = new Color(CONCRETE.exteriorColor);
-const GLASS_COLOR = new Color(GLASS.color);
+/** 재질 id → GPU 파편 바탕색 (외면 색) */
+const MATERIAL_COLORS = MATERIAL_NAMES.map((m) => new Color(MATERIALS[m].exterior.color));
 const color = new Color();
 const vel = new Vector3();
 const out = new Vector3();
@@ -181,8 +181,8 @@ export class Finale {
     this.counts.particles++;
     if (!this.sink) return;
     const meshes = s.fragments.meshes;
-    const glass = frag.material === MATERIAL.glass;
-    color.copy(glass ? GLASS_COLOR : CONCRETE_COLOR);
+    const glass = isPane(frag);
+    color.copy(MATERIAL_COLORS[frag.material]!);
     if (!glass) {
       color.r *= meshes.tint[i * 4]! * meshes.base[i * 3]!;
       color.g *= meshes.tint[i * 4 + 1]! * meshes.base[i * 3 + 1]!;

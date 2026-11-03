@@ -1,6 +1,7 @@
 // CC0 텍스처/HDRI를 받아 public/textures/ 에 풀어 둔다. 한 번 실행하고 결과 파일을 커밋한다
 // (런타임에는 외부 CDN에 의존하지 않는다). 출처는 public/textures/CREDITS.md.
-//   node scripts/fetch-assets.mjs
+//   node scripts/fetch-assets.mjs            (전부)
+//   node scripts/fetch-assets.mjs brick wood (그 폴더만, HDRI 제외)
 // 압축 해제: Windows는 시스템 bsdtar (Git Bash의 GNU tar는 zip을 못 읽는다), 그 밖은 unzip.
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -14,6 +15,11 @@ const MATERIALS = {
   'concrete-exterior': { id: 'Concrete042A', ao: true },
   'concrete-interior': { id: 'Concrete025', ao: false },
   ground: { id: 'Ground091', ao: true },
+  // 7-4 입문 건물 재질 (외면 = UV, 단면 = 같은 텍스처 트라이플래너)
+  brick: { id: 'Bricks059', ao: true },
+  wood: { id: 'Planks021', ao: true },
+  stone: { id: 'Rock030', ao: true },
+  sand: { id: 'Ground080', ao: true },
 };
 /** 맵 이름 접미사 → 저장 파일 이름 */
 const MAPS = {
@@ -61,7 +67,11 @@ async function fetchMaterial(folder, { id: assetId, ao }) {
   }
 }
 
-for (const [folder, material] of Object.entries(MATERIALS)) await fetchMaterial(folder, material);
+const only = process.argv.slice(2);
+for (const [folder, material] of Object.entries(MATERIALS)) {
+  if (only.length === 0 || only.includes(folder)) await fetchMaterial(folder, material);
+}
+if (only.length > 0) process.exit(0);
 writeFileSync(
   join(OUT, 'sky.hdr'),
   await download(`https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/${HDRI}_1k.hdr`),

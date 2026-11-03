@@ -1,12 +1,40 @@
 // 조각 데이터: 정점/인덱스/법선/UV, 면 플래그, 부피, 질량중심
 // + 워커 ↔ 메인 전송용 패킹(조각 전부를 몇 개의 큰 TypedArray로 이어 붙여 Transferable로 넘김)
-import { FRACTURE } from '../config';
+import {
+  FRACTURE,
+  MATERIAL_NAMES,
+  MATERIALS,
+  type MaterialName,
+  type MaterialSpec,
+} from '../config';
 import { EXTERIOR, uniqueVertices, type Vec3Like } from './polyhedron';
 import type { VoronoiCell } from './voronoi';
 
-/** 조각 재질. 콘크리트는 외면/단면 두 재질로, 유리는 한 재질로 그린다. */
-export const MATERIAL = { concrete: 0, glass: 1 } as const;
-export type MaterialId = (typeof MATERIAL)[keyof typeof MATERIAL];
+/**
+ * 조각 재질 id (= MATERIAL_NAMES 순서). 불투명 재질은 외면/단면 두 재질로, 판재(유리·크리스털)는 한 재질로 그린다.
+ */
+export const MATERIAL = Object.fromEntries(MATERIAL_NAMES.map((m, i) => [m, i])) as {
+  readonly [K in MaterialName]: number;
+};
+export type MaterialId = number;
+
+export function materialName(id: MaterialId): MaterialName {
+  return MATERIAL_NAMES[id] ?? 'concrete';
+}
+
+export function materialId(name: MaterialName): MaterialId {
+  return MATERIAL[name];
+}
+
+/** 조각 재질의 물성 (config MATERIALS) */
+export function materialOf(frag: { material: MaterialId }): MaterialSpec {
+  return MATERIALS[materialName(frag.material)];
+}
+
+/** 판재(유리·크리스털)인지 */
+export function isPane(frag: { material: MaterialId }): boolean {
+  return materialOf(frag).pane;
+}
 
 export interface Fragment {
   /** 월드 좌표 질량중심. 아래 정점 좌표는 전부 이 점 기준 로컬 좌표. */
@@ -236,7 +264,7 @@ export function unpackFragments(p: PackedFragments): Fragment[] {
       neighbors: p.neighbors.subarray(nb, nb + neighborCount),
       neighborAreas: p.neighborAreas.subarray(nb, nb + neighborCount),
       member: p.members[i]!,
-      material: p.materials[i]! as MaterialId,
+      material: p.materials[i]!,
     });
     pos += vertexCount * 3;
     uv += vertexCount * 2;

@@ -138,6 +138,12 @@ class Shards {
     scene.add(this.mesh);
   }
 
+  /** 건물 재질 부스러기 색: 주 재질 / 판재(유리·크리스털) */
+  setLook(solid: number, pane: number): void {
+    this.concrete.setHex(solid);
+    this.glass.setHex(pane);
+  }
+
   /** 폭발: 반경에 비례한 수를 사방(위로 치우쳐)으로 */
   blast(center: Vec3Like, radius: number): void {
     const count = Math.min(Math.round(SHARDS.blastPerMeter * radius), this.ring.capacity / 4);
@@ -294,6 +300,8 @@ export class Sparks {
   private readonly flash: Flash;
   private quality: QualityPreset;
   private time = 0;
+  /** 부스러기 색 (주 재질, 판재). 풀을 새로 만들어도 유지 */
+  private look: [number, number] = [SHARDS.color, SHARDS.glassColor];
 
   constructor(
     private readonly scene: Scene,
@@ -310,7 +318,14 @@ export class Sparks {
     this.quality = quality;
     this.shards.dispose();
     this.shards = new Shards(this.scene, SHARDS.maxShards[quality]);
+    this.shards.setLook(...this.look);
     this.shards.update(this.time);
+  }
+
+  /** 건물 재질 부스러기 색 */
+  setLook(solid: number, pane: number): void {
+    this.look = [solid, pane];
+    this.shards.setLook(solid, pane);
   }
 
   blast(center: Vec3Like, radius: number): void {

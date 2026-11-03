@@ -70,6 +70,7 @@ export function sanitize(raw: Record<string, unknown>): SaveData {
       ordersAbandoned: count(career.ordersAbandoned),
       totalFragments: count(career.totalFragments),
       best: best(career.best),
+      starterComplete: career.starterComplete === true,
     },
     boardSeed: seed(raw.boardSeed, d.boardSeed),
     settings: { quality: quality(settings.quality, d.settings.quality) },

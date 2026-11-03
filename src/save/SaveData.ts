@@ -2,7 +2,7 @@
 import { DEFAULT_QUALITY, SAVE, type QualityPreset } from '../config';
 import { emptyCareer, type CareerData } from '../orders/Career';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export interface SaveSettings {
   quality: QualityPreset;

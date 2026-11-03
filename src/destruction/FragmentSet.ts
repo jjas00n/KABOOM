@@ -5,8 +5,8 @@
 // - split: 덩어리를 여러 덩어리/조각으로 (충격 분해). 자세와 속도를 이어받는다.
 import RAPIER from '@dimforge/rapier3d-compat';
 import { Matrix4, Quaternion, Vector3, type Intersection, type Raycaster, type Scene } from 'three';
-import { CONCRETE, DEBRIS, GLASS } from '../config';
-import { MATERIAL, type Fragment } from '../fracture/Fragment';
+import { DEBRIS } from '../config';
+import { materialOf, type Fragment } from '../fracture/Fragment';
 import { FragmentMeshes, type FragmentMaterials } from '../fracture/FragmentMeshes';
 import type { Vec3Like } from '../fracture/polyhedron';
 import {
@@ -78,14 +78,14 @@ export class FragmentSet {
     const simpleMax = options.simpleColliderMaxVolume ?? 0;
     this.meshes = new FragmentMeshes(fragments, materials);
     this.shapes = fragments.map((frag) => {
-      const glass = frag.material === MATERIAL.glass;
+      const spec = materialOf(frag);
       const desc = frag.volume <= simpleMax ? cuboidCollider(frag) : hullCollider(frag);
       const t = desc.translation;
       return {
         shape: desc.shape,
         base: new Vector3(t.x, t.y, t.z),
-        density: glass ? GLASS.density : CONCRETE.density,
-        friction: glass ? GLASS.friction : CONCRETE.friction,
+        density: spec.density,
+        friction: spec.friction,
       };
     });
     this.chunkOf = fragments.map(() => null);

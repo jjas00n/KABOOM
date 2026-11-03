@@ -3,11 +3,9 @@
 // 손상 외관(DamageView: 틈·균열·흔들림, Rebar: 철근)과 불변 조건 검사도 여기서 돌린다.
 // teardown()은 건물 한 채가 쥔 GPU·물리·화재·파티클·워커 자원을 전부 놓는다 (주문 교체, 7-3).
 import { Color, type Scene, type Vector3 } from 'three';
-import {
-  generateBuilding,
-  DEFAULT_BUILDING,
-  type BuildingParams,
-} from '../building/BuildingGenerator';
+import { DEFAULT_BUILDING, type BuildingParams } from '../building/BuildingGenerator';
+import { buildArchetype } from '../building/archetypes';
+import { memberVolume, type Member } from '../building/Member';
 import { memberSeeds, seedCountsForPreset } from '../building/seedBudget';
 import {
   BUILDING_DEMO,
@@ -18,8 +16,11 @@ import {
   FIRE,
   FIREBALL,
   GLASS,
+  MATERIALS,
+  ORDERS,
   STRUCTURE,
   type GlassMode,
+  type MaterialName,
   type QualityPreset,
 } from '../config';
 import type { Assets } from '../core/Assets';
@@ -29,11 +30,12 @@ import { Durability } from '../destruction/Durability';
 import { checkInvariants, violationCount } from '../destruction/Invariants';
 import { StructureDebug } from '../destruction/StructureDebug';
 import { FractureAborted, fractureInWorker } from '../fracture/FractureJob';
-import { MATERIAL, type Fragment } from '../fracture/Fragment';
+import { materialId, type Fragment } from '../fracture/Fragment';
 import {
   createFragmentMaterials,
+  loadSurfaceTextures,
   resetDamageMaps,
-  setGlassMode,
+  setPaneMode,
   type FragmentMaterials,
 } from '../fracture/FragmentMeshes';
 import type { Aabb } from '../fracture/polyhedron';
@@ -64,6 +66,8 @@ export interface SiteSettings extends BuildingParams {
   quality: QualityPreset;
   /** 조각 예산 배율 (주문 등급·특징) */
   budgetScale: number;
+  /** 조각 수 상한 (입문 건물은 작게) */
+  fragmentCap: number;
 }
 
 export class BuildingSite {
@@ -71,6 +75,7 @@ export class BuildingSite {
     ...DEFAULT_BUILDING,
     quality: DEFAULT_QUALITY,
     budgetScale: 1,
+    fragmentCap: ORDERS.maxFragments,
   };
   readonly stats = { members: 0, fragments: 0, edges: 0, loadMs: 0 };
   /** GUI가 붙잡는 고정 객체. 건물을 새로 만들어도 같은 객체에 값을 복사한다. */
@@ -151,7 +156,7 @@ export class BuildingSite {
     private readonly scene: Scene,
     private readonly physics: PhysicsWorld,
     private readonly loading: LoadingOverlay,
-    assets: Assets | null = null,
+    private readonly assets: Assets | null = null,
     private readonly ground: PhysicsBody | null = null,
     private readonly time: TimeControl | null = null,
   ) {
@@ -172,10 +177,10 @@ export class BuildingSite {
   }
 
   applyGlassMode(): void {
-    setGlassMode(this.materials.glass, this.glassMode);
+    setPaneMode(this.materials, this.glassMode);
   }
 
-  /** 조각 재질 3종 (엑스레이 화면이 잠깐 바꾼다) */
+  /** 조각 재질 묶음 (엑스레이 화면이 잠깐 바꾼다) */
   get fragmentMaterials(): FragmentMaterials {
     return this.materials;
   }
@@ -371,7 +376,10 @@ export class BuildingSite {
 
   /** 주문의 건물 파라미터를 설정에 복사한다 (품질은 사용자 설정 유지). 다음 reset부터 */
   applyOrder(order: Order): void {
-    Object.assign(this.settings, order.building, { budgetScale: order.budgetScale });
+    Object.assign(this.settings, DEFAULT_BUILDING, order.building, {
+      budgetScale: order.budgetScale,
+      fragmentCap: order.fragmentCap,
+    });
   }
 
   /**
@@ -430,18 +438,26 @@ export class BuildingSite {
     const started = performance.now();
     this.loading.show('Generating building…');
 
-    const { quality, budgetScale, ...params } = this.settings;
-    const { members, footprint, height } = generateBuilding(params);
-    const counts = seedCountsForPreset(members, quality, budgetScale);
+    const { quality, budgetScale, fragmentCap, ...params } = this.settings;
+    const { members, footprint, height } = buildArchetype(params);
+    const counts = seedCountsForPreset(members, quality, budgetScale, fragmentCap);
     const rng = createRng(params.seed);
     const jobs = members.map((m, i) => ({
       box: m.box,
+      planes: m.planes,
+      grain: m.grain,
       seeds: memberSeeds(m, counts[i]!, rng),
-      material: m.kind === 'glass' ? MATERIAL.glass : MATERIAL.concrete,
+      material: materialId(m.material),
     }));
 
     const fracturing = new AbortController();
     this.fracturing = fracturing;
+    // 이 건물 재질의 텍스처 (처음 쓰는 재질만 받는다). 분할과 같이 기다린다
+    const textures = loadSurfaceTextures(
+      this.materials,
+      this.assets,
+      new Set(members.map((m) => m.material)),
+    );
     const frags = await fractureInWorker(
       { jobs },
       (done, total) =>
@@ -452,6 +468,7 @@ export class BuildingSite {
       fracturing.signal,
     );
     if (this.fracturing === fracturing) this.fracturing = null;
+    await textures;
     if (generation !== this.generation) return false;
 
     this.loading.progress(FRACTURE_PROGRESS_SHARE, `Building ${frags.length} fragments…`);
@@ -460,6 +477,7 @@ export class BuildingSite {
 
     this.footprint = footprint;
     this.height = height;
+    this.effects.setMaterials(...effectMaterials(members));
     const member = (i: number) => members[frags[i]!.member]!;
     this.kinds = frags.map((f) => members[f.member]!.kind);
     const d = new DestructionSystem(
@@ -494,6 +512,7 @@ export class BuildingSite {
     this.burning = new BuildingFire(
       d,
       (i) => member(i).kind,
+      (i) => member(i).material,
       this.effects.fire,
       this.lights,
       createRng(params.seed + 1),
@@ -533,4 +552,29 @@ function volumePercentile(frags: readonly Fragment[], p: number): number {
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+/** 이펙트 재질: 앵커 제외 부피가 가장 큰 불투명 재질 + 판재 재질 (없으면 유리) */
+function effectMaterials(members: readonly Member[]): [MaterialName, MaterialName] {
+  const volume = new Map<MaterialName, number>();
+  let pane: MaterialName = 'glass';
+  for (const m of members) {
+    if (MATERIALS[m.material].pane) {
+      pane = m.material;
+      continue;
+    }
+    if (m.anchor) continue;
+    volume.set(m.material, (volume.get(m.material) ?? 0) + memberVolume(m));
+  }
+  let solid: MaterialName = 'concrete';
+  let best = 0;
+  for (const [name, v] of volume) {
+    if (v > best) {
+      best = v;
+      solid = name;
+    }
+  }
+  // 판재만 있는 건물 (크리스털 동상): 부스러기도 판재 색
+  if (best === 0) solid = pane;
+  return [solid, pane];
 }

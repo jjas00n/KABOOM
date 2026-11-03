@@ -20,8 +20,8 @@ export const XRAY_HIDE = 'xrayHide';
 /** 투시 화면이 켜져 있는 동안 scene.userData에 true (스스로 visible을 켜고 끄는 이펙트가 확인한다) */
 export const XRAY_ACTIVE = 'xrayActive';
 import type { DestructionSystem } from '../destruction/DestructionSystem';
-import { MATERIAL } from '../fracture/Fragment';
-import type { FragmentMaterials } from '../fracture/FragmentMeshes';
+import { isPane } from '../fracture/Fragment';
+import { allFragmentMaterials, type FragmentMaterials } from '../fracture/FragmentMeshes';
 
 interface SavedMaterial {
   material: Material;
@@ -70,7 +70,7 @@ export class XRayView {
     this.active = true;
     this.destruction = destruction;
     destruction.fragments.meshes.overlay = true; // 화재 색이 투시 색을 덮지 않게 (끌 때 restoreColors가 푼다)
-    this.saved = [materials.exterior, materials.interior, materials.glass].map((m) => {
+    this.saved = allFragmentMaterials(materials).map((m) => {
       const s = { material: m, transparent: m.transparent, depthWrite: m.depthWrite };
       m.transparent = true; // 인스턴스 알파를 쓰려면 투명 재질이어야 한다
       m.depthWrite = false;
@@ -96,7 +96,7 @@ export class XRayView {
     const { meshes, fragments } = d.fragments;
     const attached = d.graph.attached;
     meshes.slots.forEach((slots, i) => {
-      const color = !attached[i] ? hot : fragments[i]!.material === MATERIAL.glass ? glass : ghost;
+      const color = !attached[i] ? hot : isPane(fragments[i]!) ? glass : ghost;
       for (const { batch, id } of slots) batch.setColorAt(id, color);
     });
   }

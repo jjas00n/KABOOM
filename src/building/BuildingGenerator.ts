@@ -6,6 +6,7 @@
 //   |<--- 기둥 --->|
 // 층 k: 기둥은 아래 슬래브(또는 기초) 윗면 ~ 이 층 슬래브 아랫면, 보는 슬래브 바로 아래.
 import { BUILDING } from '../config';
+import type { Archetype } from './archetypes';
 import type { Aabb } from '../fracture/polyhedron';
 import { box, type Member } from './Member';
 import { column } from './members/Column';
@@ -14,6 +15,8 @@ import { facadeFrame, wallPanel, windowOpening } from './members/WallPanel';
 import { windowGlass } from './members/Window';
 
 export interface BuildingParams {
+  /** 건물 종류 (없으면 office). office 외에는 아래 office 파라미터를 안 쓴다 (seed만) */
+  archetype?: Archetype;
   floors: number;
   baysX: number;
   baysZ: number;
@@ -27,6 +30,7 @@ export interface BuildingParams {
 }
 
 export const DEFAULT_BUILDING: BuildingParams = {
+  archetype: 'office',
   floors: BUILDING.floors,
   baysX: BUILDING.baysX,
   baysZ: BUILDING.baysZ,
@@ -64,6 +68,7 @@ export function generateBuilding(params: BuildingParams = DEFAULT_BUILDING): Bui
   const m = BUILDING.foundationMargin;
   members.push({
     kind: 'foundation',
+    material: 'concrete',
     box: box(x0 - m, 0, z0 - m, x1 + m, F, z1 + m),
     anchor: true,
   });
@@ -121,7 +126,7 @@ export function generateBuilding(params: BuildingParams = DEFAULT_BUILDING): Bui
     box(x0, roof, z0 + t, x0 + t, ph, z1 - t),
     box(x1 - t, roof, z0 + t, x1, ph, z1 - t),
   ]) {
-    members.push({ kind: 'parapet', box: b, anchor: false });
+    members.push({ kind: 'parapet', material: 'concrete', box: b, anchor: false });
   }
 
   return { members, footprint, height: ph };
@@ -137,5 +142,5 @@ function beamBand(line: number, index: number, bays: number): [number, number] {
 }
 
 function beam(b: Aabb): Member {
-  return { kind: 'beam', box: b, anchor: false };
+  return { kind: 'beam', material: 'concrete', box: b, anchor: false };
 }

@@ -5,6 +5,8 @@ import { BUILDING, ORDERS, QUALITY_PRESETS, type QualityPreset } from '../src/co
 import { Career } from '../src/orders/Career';
 import { ALL_TIERS, ALL_TRAITS } from '../src/orders/Order';
 import { generateBoard } from '../src/orders/OrderGenerator';
+import { unlockedTiersFor } from '../src/orders/unlock';
+import { buildArchetype, TINY_ARCHETYPES } from '../src/building/archetypes';
 
 const QUALITIES = Object.keys(QUALITY_PRESETS) as QualityPreset[];
 
@@ -125,6 +127,70 @@ describe('Career', () => {
       ordersAbandoned: 1,
       totalFragments: 480,
       best: { name: 'B', total: 900 },
+      starterComplete: false,
     });
+  });
+});
+
+describe('starter (tiny) orders and the tutorial gate', () => {
+  it('a new career only sees tiny orders until N buildings are demolished', () => {
+    const c = new Career();
+    for (let k = 0; k < ORDERS.tutorialBuildings; k++) {
+      expect(unlockedTiersFor(c.data)).toEqual(['tiny']);
+      for (let seed = 0; seed < 6; seed++) {
+        const board = generateBoard(seed * 31 + k, { unlockedTiers: unlockedTiersFor(c.data) });
+        expect(board.every((o) => o.tier === 'tiny')).toBe(true);
+      }
+      c.recordCompleted(`T${k}`, 50, 300);
+    }
+    expect(unlockedTiersFor(c.data)).toEqual(ALL_TIERS);
+    const board = generateBoard(5, { unlockedTiers: unlockedTiersFor(c.data) });
+    expect(board.some((o) => o.tier === 'tiny')).toBe(false);
+    // 7-4 이전 세이브 (starterComplete) 는 바로 office
+    expect(unlockedTiersFor({ buildingsDemolished: 0, starterComplete: true })).toEqual(ALL_TIERS);
+    // 포기한 의뢰는 게이트를 넘기지 않는다
+    const d = new Career();
+    d.recordAbandoned(100);
+    expect(unlockedTiersFor(d.data)).toEqual(['tiny']);
+  });
+
+  it('tiny cards are deterministic, use tiny archetypes, small budgets and fictional names', () => {
+    const tiny = { unlockedTiers: ['tiny'] as const };
+    expect(generateBoard(9, tiny)).toEqual(generateBoard(9, tiny));
+    const seen = new Set<string>();
+    for (let seed = 0; seed < 24; seed++) {
+      for (const o of generateBoard(seed, tiny)) {
+        seen.add(o.archetype);
+        expect(TINY_ARCHETYPES).toContain(o.archetype);
+        expect(o.building.archetype).toBe(o.archetype);
+        expect(o.trait).toBe('starter');
+        expect(o.fragmentCap).toBe(ORDERS.tinyMaxFragments);
+        // 부재별 반올림으로 목표보다 몇 개 많을 수 있다
+        expect(o.estimatedFragments.high).toBeLessThanOrEqual(ORDERS.tinyMaxFragments * 1.05);
+        expect(o.estimatedFragments.low).toBeGreaterThanOrEqual(100);
+        expect(ORDERS.tinyNames[o.archetype]).toContain(o.name);
+        expect(ORDERS.tinyClients).toContain(o.client);
+        expect(o.completionBonus).toBe(ORDERS.tiers.tiny.completionBonus);
+        expect(new Set(generateBoard(seed, tiny).map((x) => x.archetype)).size).toBe(3);
+        const sum = seedCountsForPreset(
+          buildArchetype(o.building).members,
+          'medium',
+          o.budgetScale,
+          o.fragmentCap,
+        ).reduce((a, n) => a + n, 0);
+        expect(o.estimatedFragments.medium).toBe(sum);
+      }
+    }
+    expect(seen).toEqual(new Set(TINY_ARCHETYPES));
+  });
+
+  it('a tiny order pays a small fraction of a small order', () => {
+    const small = generateBoard(3, { unlockedTiers: ['small'] }).filter(
+      (o) => o.trait !== 'sprawling' && o.trait !== 'slender',
+    );
+    const tiny = generateBoard(3, { unlockedTiers: ['tiny'] });
+    const avg = (os: typeof tiny) =>
+      os.reduce((a, o) => a + o.estimatedPayout.medium, 0) / os.length;
+    expect(avg(tiny)).toBeLessThan(avg(small) / 3);
   });
 });

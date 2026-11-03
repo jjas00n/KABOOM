@@ -8,8 +8,8 @@
 // 하중 경로: 앵커에서 '중력 가중' 최단 경로(Dijkstra). 아래로 내려가는 엣지는 싸고, 옆으로는 비싸고,
 // 위로 매달리는 엣지는 더 비싸다. 하중은 이 거리가 더 짧은(앵커에 더 가까운) 이웃에게만 내려보낸다.
 // (단순 hop 수 BFS는 작은 손상에도 먼 노드들의 '가장 가까운 지지'가 바뀌어 하중이 엉뚱한 곳에 몰렸다)
-import { CONCRETE, GLASS, STRUCTURE } from '../config';
-import { MATERIAL, type Fragment } from '../fracture/Fragment';
+import { STRUCTURE } from '../config';
+import { materialOf, type Fragment } from '../fracture/Fragment';
 
 interface Edge {
   a: number;
@@ -133,12 +133,9 @@ export class StructureGraph {
     const mass = new Float32Array(n);
     const anchor = new Uint8Array(n);
     const cladding = new Uint8Array(n);
-    const factor = (f: Fragment) =>
-      f.material === MATERIAL.glass
-        ? STRUCTURE.materialFactor.glass
-        : STRUCTURE.materialFactor.concrete;
+    const factor = (f: Fragment) => materialOf(f).edgeFactor;
     frags.forEach((f, i) => {
-      mass[i] = f.volume * (f.material === MATERIAL.glass ? GLASS.density : CONCRETE.density);
+      mass[i] = f.volume * materialOf(f).density;
       const node = info(i);
       anchor[i] = node.anchor ? 1 : 0;
       cladding[i] = node.cladding ? 1 : 0;
@@ -150,7 +147,12 @@ export class StructureGraph {
         if (j <= i) return; // 이웃 관계는 대칭이라 한쪽에서만
         const g = frags[j]!;
         const area = f.neighborAreas[k]!;
-        const joint = f.member === g.member ? 1 : STRUCTURE.jointFactor;
+        // 부재 사이 이음매: 재질 이음 배수(벽돌 모르타르 등)의 작은 쪽까지 곱한다
+        const joint =
+          f.member === g.member
+            ? 1
+            : STRUCTURE.jointFactor *
+              Math.min(materialOf(f).jointFactor, materialOf(g).jointFactor);
         const capacity = area * STRUCTURE.strengthPerArea * Math.min(factor(f), factor(g)) * joint;
         const a = f.centroid;
         const b = g.centroid;

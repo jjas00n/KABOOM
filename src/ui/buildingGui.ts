@@ -1,6 +1,7 @@
 // 디버그 GUI: 건물 파라미터 + 구조 통계 폴더 (게임과 건물 샌드박스가 같이 쓴다)
 import type GUI from 'lil-gui';
-import { BUILDING, QUALITY_PRESETS } from '../config';
+import { ARCHETYPES } from '../building/archetypes';
+import { BUILDING, ORDERS, QUALITY_PRESETS } from '../config';
 import type { BuildingSite } from '../game/BuildingSite';
 import { GraphLegend } from './GraphLegend';
 
@@ -10,6 +11,15 @@ export function addBuildingGui(gui: GUI, site: BuildingSite, regenerate: () => v
   const folder = gui.addFolder('Building');
   const s = site.settings;
   folder.add(s, 'quality', Object.keys(QUALITY_PRESETS)).name('Quality');
+  // 건물 종류: 입문 건물은 입문 주문과 같은 조각 예산으로 (Regenerate로 반영)
+  folder
+    .add(s, 'archetype', ARCHETYPES)
+    .name('Archetype')
+    .onChange((a: string) => {
+      const tiny = a !== 'office';
+      s.budgetScale = tiny ? ORDERS.tiers.tiny.budgetScale : 1;
+      s.fragmentCap = tiny ? ORDERS.tinyMaxFragments : ORDERS.maxFragments;
+    });
   folder.add(s, 'floors', ...limits.floors, 1).name('Floors');
   folder.add(s, 'baysX', ...limits.bays, 1).name('Bays X');
   folder.add(s, 'baysZ', ...limits.bays, 1).name('Bays Z');
