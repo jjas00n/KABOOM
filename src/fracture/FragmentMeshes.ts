@@ -32,7 +32,7 @@ import {
 import { NOISE_GLSL } from '../fx/noise';
 import type { Assets } from '../core/Assets';
 import { createRng } from './seeds';
-import { MATERIAL, type Fragment } from './Fragment';
+import { isPane, type Fragment } from './Fragment';
 import type { BatchSlot } from '../physics/PhysicsWorld';
 
 export interface FragmentMaterials {
@@ -384,7 +384,7 @@ export class FragmentMeshes {
     const interior: Part[] = [];
     const glass: Part[] = [];
     for (const frag of frags) {
-      if (frag.material === MATERIAL.glass) {
+      if (isPane(frag)) {
         exterior.push(null);
         interior.push(null);
         glass.push(wholeGeometry(frag));

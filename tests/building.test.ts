@@ -118,8 +118,22 @@ describe('runFracture across members', () => {
     const upper = { min: { x: 0.5, y: 1, z: 0.5 }, max: { x: 1.5, y: 2, z: 1.5 } };
     const frags = runFracture({
       jobs: [
-        { box: lower, seeds: memberSeeds({ kind: 'slab', box: lower, anchor: true }, 30, rng) },
-        { box: upper, seeds: memberSeeds({ kind: 'column', box: upper, anchor: false }, 10, rng) },
+        {
+          box: lower,
+          seeds: memberSeeds(
+            { kind: 'slab', material: 'concrete', box: lower, anchor: true },
+            30,
+            rng,
+          ),
+        },
+        {
+          box: upper,
+          seeds: memberSeeds(
+            { kind: 'column', material: 'concrete', box: upper, anchor: false },
+            10,
+            rng,
+          ),
+        },
       ],
     });
     let crossArea = 0;

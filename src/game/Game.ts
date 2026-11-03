@@ -43,7 +43,7 @@ import type { PhysicsBody, PhysicsWorld } from '../physics/PhysicsWorld';
 import { Stage } from '../sandbox/Stage';
 import { Completion } from '../economy/Completion';
 import { Economy } from '../economy/Economy';
-import { MATERIAL } from '../fracture/Fragment';
+import { materialName } from '../fracture/Fragment';
 import { MoneyPopups } from '../fx/MoneyPopups';
 import { Career } from '../orders/Career';
 import type { Order } from '../orders/Order';
@@ -817,7 +817,7 @@ export class Game {
         count: d.graph.nodeCount,
         mass: d.graph.mass,
         kind: (i) => this.site.kindOf(i),
-        material: (i) => (frags[i]!.material === MATERIAL.glass ? 'glass' : 'concrete'),
+        material: (i) => materialName(frags[i]!.material),
         durability: (i) => d.durability.max[i]!,
       },
       this.site.settings.seed,

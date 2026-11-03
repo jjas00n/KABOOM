@@ -7,9 +7,8 @@ import { boxVolume } from '../building/Member';
 import { seedCountsForPreset } from '../building/seedBudget';
 import {
   BUILDING,
-  CONCRETE,
   ECONOMY,
-  GLASS,
+  MATERIALS,
   ORDERS,
   QUALITY_PRESETS,
   type QualityPreset,
@@ -142,11 +141,9 @@ function estimate(order: Order): void {
     let value = 0;
     members.forEach((m, i) => {
       const n = counts[i]!;
-      const glass = m.kind === 'glass';
-      const mass = (boxVolume(m.box) * (glass ? GLASS.density : CONCRETE.density)) / n;
-      const material = glass ? 'glass' : 'concrete';
+      const mass = (boxVolume(m.box) * MATERIALS[m.material].density) / n;
       fragments += n;
-      value += n * fragmentValue(mass, m.kind, material, 1, false, ECONOMY, order.priceScale);
+      value += n * fragmentValue(mass, m.kind, m.material, 1, false, ECONOMY, order.priceScale);
     });
     order.estimatedFragments[q] = fragments;
     order.estimatedPayout[q] = Math.round(

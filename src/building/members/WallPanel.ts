@@ -50,6 +50,7 @@ export function wallPanel(
   const { t0, t1 } = frame;
   const panel = (a: number, b: number, c: number, d: number): Member => ({
     kind: 'wallPanel',
+    material: 'concrete',
     box: frame.box(a, b, c, d, t0, t1),
     anchor: false,
   });

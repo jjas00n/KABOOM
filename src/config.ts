@@ -83,6 +83,198 @@ export const GLASS = {
   thickness: 0.03, // m (굴절 근사)
 } as const;
 
+/** 조각 재질 (Fragment.material id 순서와 같다: 0 concrete, 1 glass, ...) */
+export const MATERIAL_NAMES = [
+  'concrete',
+  'glass',
+  'brick',
+  'wood',
+  'crystal',
+  'stone',
+  'sand',
+] as const;
+export type MaterialName = (typeof MATERIAL_NAMES)[number];
+
+/** 표면 하나 (외면 또는 단면). texture: public/textures 폴더 (없으면 단색). tint: 텍스처에 곱하는 색 */
+export interface SurfaceSpec {
+  texture: string | null;
+  color: number; // 텍스처가 없을 때(테스트·판재) 단색
+  tint: number;
+  brightness: number; // tint 배수 (1 넘어도 된다)
+  roughness: number;
+}
+
+export interface MaterialSpec {
+  density: number; // kg/m^3
+  friction: number;
+  edgeFactor: number; // 엣지 강도 = 면적 × strengthPerArea × min(양쪽 계수)
+  pricePerKg: number; // $/kg (부재 종류 단가가 우선, ECONOMY.kindPricePerKg)
+  fireFuel: number; // FIRE.fuel에 없는 부재 종류의 연료 (초)
+  fireSpread: number; // 이 재질 조각으로 번지는 열 배수
+  /** 판재(유리·크리스털): 반투명 배치 1개, 화염 폭발 반경 안 전부 파손, 손상 자세 계산에서 이웃 무시 */
+  pane: boolean;
+  exterior: SurfaceSpec;
+  interior: SurfaceSpec;
+  normalScale: number;
+  dustColor: number;
+  dustScale: number; // 먼지 퍼프 크기 배수
+  shardColor: number;
+}
+
+/**
+ * 재질 표. concrete·glass는 기존 값(CONCRETE·GLASS)을 그대로 가리킨다 (office 결과 불변).
+ * 7-4 입문 건물 재질: 벽돌 / 나무 / 크리스털 / 석재(받침) / 모래(성)
+ */
+export const MATERIALS: Readonly<Record<MaterialName, MaterialSpec>> = {
+  concrete: {
+    density: CONCRETE.density,
+    friction: CONCRETE.friction,
+    edgeFactor: 1,
+    pricePerKg: 0.004,
+    fireFuel: 0,
+    fireSpread: 1,
+    pane: false,
+    exterior: {
+      texture: 'concrete-exterior',
+      color: CONCRETE.exteriorColor,
+      tint: CONCRETE.exteriorTint,
+      brightness: CONCRETE.exteriorBrightness,
+      roughness: CONCRETE.exteriorRoughness,
+    },
+    interior: {
+      texture: 'concrete-interior',
+      color: CONCRETE.interiorColor,
+      tint: CONCRETE.interiorTint,
+      brightness: CONCRETE.interiorBrightness,
+      roughness: CONCRETE.interiorRoughness,
+    },
+    normalScale: CONCRETE.normalScale,
+    dustColor: 0xb5ab9c,
+    dustScale: 1,
+    shardColor: 0x9c968c,
+  },
+  glass: {
+    density: GLASS.density,
+    friction: GLASS.friction,
+    edgeFactor: 0.1,
+    pricePerKg: 0.08, // 얇아서 가볍지만 비싸다
+    fireFuel: 0,
+    fireSpread: 1,
+    pane: true,
+    exterior: {
+      texture: null,
+      color: GLASS.color,
+      tint: 0xffffff,
+      brightness: 1,
+      roughness: GLASS.roughness,
+    },
+    interior: {
+      texture: null,
+      color: GLASS.color,
+      tint: 0xffffff,
+      brightness: 1,
+      roughness: GLASS.roughness,
+    },
+    normalScale: 0,
+    dustColor: 0xb5ab9c,
+    dustScale: 1,
+    shardColor: 0xcfe6f2,
+  },
+  brick: {
+    density: 1900,
+    friction: 0.8,
+    edgeFactor: 0.35,
+    pricePerKg: 0.006,
+    fireFuel: 0,
+    fireSpread: 0.3,
+    pane: false,
+    exterior: {
+      texture: 'brick',
+      color: 0xa4553f,
+      tint: 0xffffff,
+      brightness: 1.1,
+      roughness: 0.95,
+    },
+    interior: { texture: null, color: 0x9a4430, tint: 0xffffff, brightness: 1, roughness: 1 },
+    normalScale: 0.8,
+    dustColor: 0xa8705c,
+    dustScale: 0.9,
+    shardColor: 0x9a4a36,
+  },
+  wood: {
+    density: 550,
+    friction: 0.6,
+    edgeFactor: 0.25,
+    pricePerKg: 0.03,
+    fireFuel: 18,
+    fireSpread: 3,
+    pane: false,
+    exterior: {
+      texture: 'wood',
+      color: 0x8a6440,
+      tint: 0xffffff,
+      brightness: 1.1,
+      roughness: 0.85,
+    },
+    interior: { texture: null, color: 0xd9b98a, tint: 0xffffff, brightness: 1, roughness: 0.9 },
+    normalScale: 0.6,
+    dustColor: 0x9c8a70,
+    dustScale: 0.7,
+    shardColor: 0xb08a5c,
+  },
+  crystal: {
+    density: 2600,
+    friction: 0.3,
+    edgeFactor: 0.08,
+    pricePerKg: 0.05,
+    fireFuel: 0,
+    fireSpread: 0,
+    pane: true,
+    exterior: { texture: null, color: 0xa8dff0, tint: 0xffffff, brightness: 1, roughness: 0.04 },
+    interior: { texture: null, color: 0xa8dff0, tint: 0xffffff, brightness: 1, roughness: 0.04 },
+    normalScale: 0,
+    dustColor: 0xd8eef6,
+    dustScale: 0.5,
+    shardColor: 0xd6f4ff,
+  },
+  stone: {
+    density: 2500,
+    friction: 0.9,
+    edgeFactor: 1,
+    pricePerKg: 0.002,
+    fireFuel: 0,
+    fireSpread: 0,
+    pane: false,
+    exterior: {
+      texture: 'stone',
+      color: 0x8d8a84,
+      tint: 0xffffff,
+      brightness: 1.1,
+      roughness: 0.95,
+    },
+    interior: { texture: null, color: 0x6e6b66, tint: 0xffffff, brightness: 1, roughness: 1 },
+    normalScale: 0.7,
+    dustColor: 0xa9a59c,
+    dustScale: 1,
+    shardColor: 0x85827b,
+  },
+  sand: {
+    density: 1600,
+    friction: 0.95,
+    edgeFactor: 0.12,
+    pricePerKg: 0.004,
+    fireFuel: 0,
+    fireSpread: 0,
+    pane: false,
+    exterior: { texture: 'sand', color: 0xd8bf8a, tint: 0xffffff, brightness: 1.1, roughness: 1 },
+    interior: { texture: null, color: 0xc4a670, tint: 0xffffff, brightness: 1, roughness: 1 },
+    normalScale: 0.5,
+    dustColor: 0xe0c896,
+    dustScale: 1.8,
+    shardColor: 0xcfb07a,
+  },
+};
+
 /**
  * CC0 텍스처 (public/textures, 출처 CREDITS.md). 경로는 BASE_URL 기준.
  * 단면은 트라이플래너: 조각 원래 자리 좌표 × interiorScale (반복 / m).
@@ -458,11 +650,11 @@ export const DURABILITY = {
 
 /** 경제: 파편 = 돈 (src/economy/, Phase 7-1) */
 export const ECONOMY = {
-  // 재질 단가 ($/kg). 부재 종류(kind)가 우선, 없으면 재질로. 0이면 수익 없음 + 파괴율 계산에서도 빠진다
-  pricePerKg: {
-    concrete: 0.004,
-    glass: 0.08, // 얇아서 가볍지만 비싸다
-  } as Record<string, number>,
+  // 재질 단가 ($/kg)는 재질 표(MATERIALS)에서
+  pricePerKg: Object.fromEntries(MATERIAL_NAMES.map((m) => [m, MATERIALS[m].pricePerKg])) as Record<
+    string,
+    number
+  >,
   kindPricePerKg: {
     foundation: 0, // 기초는 돈도 파괴율도 아님
   } as Record<string, number>,
@@ -627,7 +819,6 @@ export const STRUCTURE = {
   // (이게 없으면 1층 기둥을 다 없애도 외벽 패널이 건물 전체를 받쳐 버린다)
   cladding: ['wallPanel', 'glass', 'parapet'],
   strengthPerArea: 1e5, // 접촉면 1m²가 버티는 하중 (kg). 기하 기준 강도 (실제 콘크리트의 ~3%: 게임용)
-  materialFactor: { concrete: 1, glass: 0.1 }, // 엣지 강도 = 면적 × strengthPerArea × min(양쪽 계수)
   jointFactor: 0.5, // 부재 사이 이음매는 부재 안보다 약하다
   // 멀쩡한 건물에서 계산한 하중 × intactSafety 보다는 항상 강하게: 자중으로는 무너지지 않는다.
   // 기둥이 빠져 하중이 이 배수 넘게 몰리는 엣지부터 끊긴다.

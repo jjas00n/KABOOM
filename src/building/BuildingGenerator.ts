@@ -64,6 +64,7 @@ export function generateBuilding(params: BuildingParams = DEFAULT_BUILDING): Bui
   const m = BUILDING.foundationMargin;
   members.push({
     kind: 'foundation',
+    material: 'concrete',
     box: box(x0 - m, 0, z0 - m, x1 + m, F, z1 + m),
     anchor: true,
   });
@@ -121,7 +122,7 @@ export function generateBuilding(params: BuildingParams = DEFAULT_BUILDING): Bui
     box(x0, roof, z0 + t, x0 + t, ph, z1 - t),
     box(x1 - t, roof, z0 + t, x1, ph, z1 - t),
   ]) {
-    members.push({ kind: 'parapet', box: b, anchor: false });
+    members.push({ kind: 'parapet', material: 'concrete', box: b, anchor: false });
   }
 
   return { members, footprint, height: ph };
@@ -137,5 +138,5 @@ function beamBand(line: number, index: number, bays: number): [number, number] {
 }
 
 function beam(b: Aabb): Member {
-  return { kind: 'beam', box: b, anchor: false };
+  return { kind: 'beam', material: 'concrete', box: b, anchor: false };
 }

@@ -13,5 +13,10 @@ export function windowGlass(
 ): Member {
   const mid = (frame.t0 + frame.t1) / 2;
   const half = BUILDING.glassThickness / 2;
-  return { kind: 'glass', box: frame.box(u0, u1, y0, y1, mid - half, mid + half), anchor: false };
+  return {
+    kind: 'glass',
+    material: 'glass',
+    box: frame.box(u0, u1, y0, y1, mid - half, mid + half),
+    anchor: false,
+  };
 }

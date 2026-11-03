@@ -20,7 +20,7 @@ export const XRAY_HIDE = 'xrayHide';
 /** 투시 화면이 켜져 있는 동안 scene.userData에 true (스스로 visible을 켜고 끄는 이펙트가 확인한다) */
 export const XRAY_ACTIVE = 'xrayActive';
 import type { DestructionSystem } from '../destruction/DestructionSystem';
-import { MATERIAL } from '../fracture/Fragment';
+import { isPane } from '../fracture/Fragment';
 import type { FragmentMaterials } from '../fracture/FragmentMeshes';
 
 interface SavedMaterial {
@@ -96,7 +96,7 @@ export class XRayView {
     const { meshes, fragments } = d.fragments;
     const attached = d.graph.attached;
     meshes.slots.forEach((slots, i) => {
-      const color = !attached[i] ? hot : fragments[i]!.material === MATERIAL.glass ? glass : ghost;
+      const color = !attached[i] ? hot : isPane(fragments[i]!) ? glass : ghost;
       for (const { batch, id } of slots) batch.setColorAt(id, color);
     });
   }

@@ -1,11 +1,13 @@
 // 건물 부재: 축 정렬 박스 하나 = 부재 하나. 부재끼리는 겹치지 않고 면으로만 맞닿는다.
-import type { FRACTURE } from '../config';
+import type { FRACTURE, MaterialName } from '../config';
 import type { Aabb } from '../fracture/polyhedron';
 
 export type MemberKind = keyof typeof FRACTURE.seedDensity;
 
 export interface Member {
   kind: MemberKind;
+  /** 재질 (물성·렌더·단가). 생성기가 정한다 (종류로 추론하지 않는다) */
+  material: MaterialName;
   box: Aabb;
   /** 지면에 고정된 부재 (구조 그래프의 앵커, 항상 fixed) */
   anchor: boolean;

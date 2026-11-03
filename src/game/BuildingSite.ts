@@ -29,7 +29,7 @@ import { Durability } from '../destruction/Durability';
 import { checkInvariants, violationCount } from '../destruction/Invariants';
 import { StructureDebug } from '../destruction/StructureDebug';
 import { FractureAborted, fractureInWorker } from '../fracture/FractureJob';
-import { MATERIAL, type Fragment } from '../fracture/Fragment';
+import { materialId, type Fragment } from '../fracture/Fragment';
 import {
   createFragmentMaterials,
   resetDamageMaps,
@@ -437,7 +437,7 @@ export class BuildingSite {
     const jobs = members.map((m, i) => ({
       box: m.box,
       seeds: memberSeeds(m, counts[i]!, rng),
-      material: m.kind === 'glass' ? MATERIAL.glass : MATERIAL.concrete,
+      material: materialId(m.material),
     }));
 
     const fracturing = new AbortController();
