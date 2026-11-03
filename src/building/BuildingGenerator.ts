@@ -30,6 +30,7 @@ export interface BuildingParams {
 }
 
 export const DEFAULT_BUILDING: BuildingParams = {
+  archetype: 'office',
   floors: BUILDING.floors,
   baysX: BUILDING.baysX,
   baysZ: BUILDING.baysZ,

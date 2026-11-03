@@ -3,7 +3,7 @@
 //   - 특징(유리 많음/고층 슬림/저층 넓음/보강) = 모양과 보상을 바꿔 고르는 데 전략이 생기게
 //   - unlockedTiers: 열린 등급만 나온다 (Phase 10 등급 해금 자리). 다 열려 있으면 등급마다 한 장
 //   - tiny(입문, 7-4): 아키타입(크리스털 동상/벽돌 오두막/나무 헛간/모래성)이 특징. 이름·의뢰인도 입문용
-import { buildArchetype, TINY_ARCHETYPES } from '../building/archetypes';
+import { buildArchetype, TINY_ARCHETYPES, type Archetype } from '../building/archetypes';
 import { DEFAULT_BUILDING } from '../building/BuildingGenerator';
 import { memberVolume } from '../building/Member';
 import { seedCountsForPreset } from '../building/seedBudget';
@@ -36,11 +36,15 @@ export function generateBoard(boardSeed: number, options: BoardOptions = {}): Or
   const traits = shuffle([...ALL_TRAITS], rng);
   const clients = shuffle([...ORDERS.clients], rng);
   const prefixes = shuffle([...ORDERS.buildingPrefixes], rng);
+  // 입문 카드는 서로 다른 아키타입부터 (4종 < 카드 수일 때만 반복)
+  const archetypes = shuffle([...TINY_ARCHETYPES], rng);
+  let tinyCount = 0;
   const orders: Order[] = [];
   for (let i = 0; i < n; i++) {
     const tier = tiers[i]!;
     if (tier === 'tiny') {
-      orders.push(makeTinyOrder(rng, `${boardSeed}-${i}`, clients, i));
+      const archetype = archetypes[tinyCount++ % archetypes.length]!;
+      orders.push(makeTinyOrder(rng, `${boardSeed}-${i}`, archetype, i));
       continue;
     }
     const suffixes = ORDERS.buildingSuffixes[tier];
@@ -66,9 +70,8 @@ function pickTiers(unlocked: readonly OrderTier[], n: number, rng: Rng): OrderTi
 }
 
 /** 입문 주문: 아키타입 하나를 골라 이름·의뢰인을 붙인다. 보상은 등급 값 그대로 */
-function makeTinyOrder(rng: Rng, id: string, _clients: readonly string[], index: number): Order {
+function makeTinyOrder(rng: Rng, id: string, archetype: Archetype, index: number): Order {
   const t = ORDERS.tiers.tiny;
-  const archetype = TINY_ARCHETYPES[Math.floor(rng() * TINY_ARCHETYPES.length)]!;
   const names = ORDERS.tinyNames[archetype]!;
   const name = names[Math.floor(rng() * names.length)]!;
   const clients = ORDERS.tinyClients;

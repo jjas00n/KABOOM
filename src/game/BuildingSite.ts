@@ -5,6 +5,7 @@
 import { Color, type Scene, type Vector3 } from 'three';
 import { DEFAULT_BUILDING, type BuildingParams } from '../building/BuildingGenerator';
 import { buildArchetype } from '../building/archetypes';
+import { memberVolume, type Member } from '../building/Member';
 import { memberSeeds, seedCountsForPreset } from '../building/seedBudget';
 import {
   BUILDING_DEMO,
@@ -15,9 +16,11 @@ import {
   FIRE,
   FIREBALL,
   GLASS,
+  MATERIALS,
   ORDERS,
   STRUCTURE,
   type GlassMode,
+  type MaterialName,
   type QualityPreset,
 } from '../config';
 import type { Assets } from '../core/Assets';
@@ -474,6 +477,7 @@ export class BuildingSite {
 
     this.footprint = footprint;
     this.height = height;
+    this.effects.setMaterials(...effectMaterials(members));
     const member = (i: number) => members[frags[i]!.member]!;
     this.kinds = frags.map((f) => members[f.member]!.kind);
     const d = new DestructionSystem(
@@ -548,4 +552,29 @@ function volumePercentile(frags: readonly Fragment[], p: number): number {
 
 function nextFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+/** 이펙트 재질: 앵커 제외 부피가 가장 큰 불투명 재질 + 판재 재질 (없으면 유리) */
+function effectMaterials(members: readonly Member[]): [MaterialName, MaterialName] {
+  const volume = new Map<MaterialName, number>();
+  let pane: MaterialName = 'glass';
+  for (const m of members) {
+    if (MATERIALS[m.material].pane) {
+      pane = m.material;
+      continue;
+    }
+    if (m.anchor) continue;
+    volume.set(m.material, (volume.get(m.material) ?? 0) + memberVolume(m));
+  }
+  let solid: MaterialName = 'concrete';
+  let best = 0;
+  for (const [name, v] of volume) {
+    if (v > best) {
+      best = v;
+      solid = name;
+    }
+  }
+  // 판재만 있는 건물 (크리스털 동상): 부스러기도 판재 색
+  if (best === 0) solid = pane;
+  return [solid, pane];
 }

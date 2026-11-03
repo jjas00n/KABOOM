@@ -86,6 +86,8 @@ void main() {
 const direction = new Vector3();
 
 export class Dust {
+  /** 퍼프 크기 배수 (건물 재질) */
+  private sizeScale = 1;
   readonly mesh: Mesh<InstancedBufferGeometry, ShaderMaterial>;
   private readonly ring = new ParticleRing(DUST.maxPuffs);
   private readonly start: InstancedBufferAttribute;
@@ -134,6 +136,12 @@ export class Dust {
     this.mesh.renderOrder = 1; // 유리 등 다른 투명 물체 뒤에
     this.mesh.userData[XRAY_HIDE] = true;
     scene.add(this.mesh);
+  }
+
+  /** 건물 재질 먼지: 색과 크기 배수 (MATERIALS.dustColor / dustScale) */
+  setLook(color: number, scale: number): void {
+    (this.mesh.material.uniforms.uColor!.value as Color).setHex(color);
+    this.sizeScale = scale;
   }
 
   /** 폭발: 반경에 비례해 퍼프를 사방(위쪽으로 치우쳐)으로 */
@@ -215,7 +223,7 @@ export class Dust {
     const i = this.ring.allocate();
     this.start.setXYZ(i, x, y, z);
     this.velocity.setXYZ(i, velocity.x, velocity.y, velocity.z);
-    this.params.setXYZW(i, this.time, life, size, Math.random());
+    this.params.setXYZW(i, this.time, life, size * this.sizeScale, Math.random());
   }
 }
 

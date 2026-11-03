@@ -171,6 +171,7 @@ describe('starter (tiny) orders and the tutorial gate', () => {
         expect(ORDERS.tinyNames[o.archetype]).toContain(o.name);
         expect(ORDERS.tinyClients).toContain(o.client);
         expect(o.completionBonus).toBe(ORDERS.tiers.tiny.completionBonus);
+        expect(new Set(generateBoard(seed, tiny).map((x) => x.archetype)).size).toBe(3);
         const sum = seedCountsForPreset(
           buildArchetype(o.building).members,
           'medium',

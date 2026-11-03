@@ -1,7 +1,7 @@
 // 파괴 이펙트 묶음: 먼지(Dust) + 부스러기·섬광(Sparks) + 불(Fire).
 // 파티클 시계는 물리 시간(실제 시간 × timeScale)이라 hit-stop·킬캠 슬로모션에서 같이 느려진다.
 import type { Scene } from 'three';
-import { DURABILITY, DUST, type QualityPreset } from '../config';
+import { DURABILITY, DUST, MATERIALS, type MaterialName, type QualityPreset } from '../config';
 import type { Vec3Like } from '../fracture/polyhedron';
 import { Dust } from './Dust';
 import { Fire } from './Fire';
@@ -28,6 +28,13 @@ export class Effects {
 
   setQuality(quality: QualityPreset): void {
     this.sparks.setQuality(quality);
+  }
+
+  /** 건물 재질에 맞춘 먼지·부스러기 색 (solid: 주 재질, pane: 판재 재질) */
+  setMaterials(solid: MaterialName, pane: MaterialName): void {
+    const s = MATERIALS[solid];
+    this.dust.setLook(s.dustColor, s.dustScale);
+    this.sparks.setLook(s.shardColor, MATERIALS[pane].shardColor);
   }
 
   /** 폭발 (반경 m) */
