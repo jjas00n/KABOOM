@@ -38,6 +38,7 @@ function sample(): SaveData {
       ordersAbandoned: 1,
       totalFragments: 9876,
       best: { name: 'Riverside Tower', total: 2100 },
+      starterComplete: false,
     },
     boardSeed: 17,
     settings: { quality: 'high' },
@@ -120,7 +121,34 @@ describe('SaveStore', () => {
     const loaded = new SaveStore(storage).load();
     expect(loaded.wallet).toEqual({ money: 300, lifetimeEarned: 300 });
     expect(loaded.boardSeed).toBe(4);
-    expect(loaded.career).toEqual(defaultSave().career);
+    // v0 → v1 → v2: 7-4 이전 세이브는 입문 단계를 건너뛴다
+    expect(loaded.career).toEqual({ ...defaultSave().career, starterComplete: true });
     expect(migrate({ version: -1 })).toBeNull();
+  });
+
+  it('v1 → v2: keeps wallet, career and board, and skips the starter tier', () => {
+    const v1 = {
+      version: 1,
+      wallet: { money: 800, lifetimeEarned: 2500 },
+      career: { buildingsDemolished: 1, ordersAbandoned: 2, totalFragments: 4000, best: null },
+      boardSeed: 12,
+      settings: { quality: 'low' },
+    };
+    const storage = new MemoryStorage();
+    storage.setItem(SAVE.key, JSON.stringify(v1));
+    const loaded = new SaveStore(storage).load();
+    expect(loaded.version).toBe(2);
+    expect(loaded.wallet).toEqual(v1.wallet);
+    expect(loaded.career).toEqual({ ...v1.career, starterComplete: true });
+    expect(loaded.boardSeed).toBe(12);
+    expect(loaded.settings.quality).toBe('low');
+    // 새 게임은 입문 단계부터
+    expect(defaultSave().career.starterComplete).toBe(false);
+  });
+
+  it('a future version starts a new game', () => {
+    const storage = new MemoryStorage();
+    storage.setItem(SAVE.key, JSON.stringify({ ...sample(), version: SAVE_VERSION + 1 }));
+    expect(new SaveStore(storage).load()).toEqual(defaultSave());
   });
 });

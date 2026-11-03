@@ -17,7 +17,7 @@ import {
   WebGLRenderTarget,
   type WebGLRenderer,
 } from 'three';
-import { generateBuilding } from '../building/BuildingGenerator';
+import { buildArchetype } from '../building/archetypes';
 import type { Member } from '../building/Member';
 import { MATERIALS, ORDERS } from '../config';
 import type { Order } from '../orders/Order';
@@ -55,7 +55,7 @@ export class OrderThumbnails {
 
   private render(order: Order): string {
     const { width, height } = ORDERS.thumbnail;
-    const { members, footprint, height: top } = generateBuilding(order.building);
+    const { members, footprint, height: top } = buildArchetype(order.building);
     const scene = new Scene();
     scene.background = new Color(BACKGROUND);
     scene.add(new AmbientLight(0xffffff, 1.2));

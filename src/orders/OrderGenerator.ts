@@ -2,7 +2,9 @@
 //   - 등급(소/중/대) = 규모·조각 예산·보상 배율·완료 보너스. 크면 총액이 크지만 시간당 효율은 낮다
 //   - 특징(유리 많음/고층 슬림/저층 넓음/보강) = 모양과 보상을 바꿔 고르는 데 전략이 생기게
 //   - unlockedTiers: 열린 등급만 나온다 (Phase 10 등급 해금 자리). 다 열려 있으면 등급마다 한 장
-import { DEFAULT_BUILDING, generateBuilding } from '../building/BuildingGenerator';
+//   - tiny(입문, 7-4): 아키타입(크리스털 동상/벽돌 오두막/나무 헛간/모래성)이 특징. 이름·의뢰인도 입문용
+import { buildArchetype, TINY_ARCHETYPES } from '../building/archetypes';
+import { DEFAULT_BUILDING } from '../building/BuildingGenerator';
 import { memberVolume } from '../building/Member';
 import { seedCountsForPreset } from '../building/seedBudget';
 import {
@@ -37,6 +39,10 @@ export function generateBoard(boardSeed: number, options: BoardOptions = {}): Or
   const orders: Order[] = [];
   for (let i = 0; i < n; i++) {
     const tier = tiers[i]!;
+    if (tier === 'tiny') {
+      orders.push(makeTinyOrder(rng, `${boardSeed}-${i}`, clients, i));
+      continue;
+    }
     const suffixes = ORDERS.buildingSuffixes[tier];
     const suffix = suffixes[Math.floor(rng() * suffixes.length)]!;
     orders.push(
@@ -57,6 +63,35 @@ function pickTiers(unlocked: readonly OrderTier[], n: number, rng: Rng): OrderTi
   const tiers = shuffle([...unlocked], rng).slice(0, n);
   while (tiers.length < n) tiers.push(unlocked[Math.floor(rng() * unlocked.length)]!);
   return tiers;
+}
+
+/** 입문 주문: 아키타입 하나를 골라 이름·의뢰인을 붙인다. 보상은 등급 값 그대로 */
+function makeTinyOrder(rng: Rng, id: string, _clients: readonly string[], index: number): Order {
+  const t = ORDERS.tiers.tiny;
+  const archetype = TINY_ARCHETYPES[Math.floor(rng() * TINY_ARCHETYPES.length)]!;
+  const names = ORDERS.tinyNames[archetype]!;
+  const name = names[Math.floor(rng() * names.length)]!;
+  const clients = ORDERS.tinyClients;
+  const client = clients[(index + Math.floor(rng() * clients.length)) % clients.length]!;
+  const seed = 1 + Math.floor(rng() * 0x7ffffffe);
+  const order: Order = {
+    id,
+    name,
+    client,
+    tier: 'tiny',
+    trait: 'starter',
+    archetype,
+    building: { ...DEFAULT_BUILDING, archetype, seed },
+    budgetScale: t.budgetScale,
+    fragmentCap: ORDERS.tinyMaxFragments,
+    rewardMultiplier: t.rewardMultiplier,
+    completionBonus: t.completionBonus,
+    priceScale: {},
+    estimatedFragments: { low: 0, medium: 0, high: 0 },
+    estimatedPayout: { low: 0, medium: 0, high: 0 },
+  };
+  estimate(order);
+  return order;
 }
 
 interface Identity {
@@ -117,8 +152,10 @@ function makeOrder(rng: Rng, who: Identity): Order {
   const rewardMultiplier = round2(reward);
   const order: Order = {
     ...who,
+    archetype: 'office',
     building,
     budgetScale: round2(budgetScale),
+    fragmentCap: ORDERS.maxFragments,
     rewardMultiplier,
     completionBonus: t.completionBonus,
     priceScale,
@@ -134,9 +171,9 @@ function makeOrder(rng: Rng, who: Identity): Order {
  * (내구도 가치·희귀 제외 근사). 완파하면 전부 지급 + 완료 보너스.
  */
 function estimate(order: Order): void {
-  const { members } = generateBuilding(order.building);
+  const { members } = buildArchetype(order.building);
   for (const q of QUALITIES) {
-    const counts = seedCountsForPreset(members, q, order.budgetScale);
+    const counts = seedCountsForPreset(members, q, order.budgetScale, order.fragmentCap);
     let fragments = 0;
     let value = 0;
     members.forEach((m, i) => {

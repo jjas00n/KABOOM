@@ -3,11 +3,8 @@
 // 손상 외관(DamageView: 틈·균열·흔들림, Rebar: 철근)과 불변 조건 검사도 여기서 돌린다.
 // teardown()은 건물 한 채가 쥔 GPU·물리·화재·파티클·워커 자원을 전부 놓는다 (주문 교체, 7-3).
 import { Color, type Scene, type Vector3 } from 'three';
-import {
-  generateBuilding,
-  DEFAULT_BUILDING,
-  type BuildingParams,
-} from '../building/BuildingGenerator';
+import { DEFAULT_BUILDING, type BuildingParams } from '../building/BuildingGenerator';
+import { buildArchetype } from '../building/archetypes';
 import { memberSeeds, seedCountsForPreset } from '../building/seedBudget';
 import {
   BUILDING_DEMO,
@@ -18,6 +15,7 @@ import {
   FIRE,
   FIREBALL,
   GLASS,
+  ORDERS,
   STRUCTURE,
   type GlassMode,
   type QualityPreset,
@@ -65,6 +63,8 @@ export interface SiteSettings extends BuildingParams {
   quality: QualityPreset;
   /** 조각 예산 배율 (주문 등급·특징) */
   budgetScale: number;
+  /** 조각 수 상한 (입문 건물은 작게) */
+  fragmentCap: number;
 }
 
 export class BuildingSite {
@@ -72,6 +72,7 @@ export class BuildingSite {
     ...DEFAULT_BUILDING,
     quality: DEFAULT_QUALITY,
     budgetScale: 1,
+    fragmentCap: ORDERS.maxFragments,
   };
   readonly stats = { members: 0, fragments: 0, edges: 0, loadMs: 0 };
   /** GUI가 붙잡는 고정 객체. 건물을 새로 만들어도 같은 객체에 값을 복사한다. */
@@ -372,7 +373,10 @@ export class BuildingSite {
 
   /** 주문의 건물 파라미터를 설정에 복사한다 (품질은 사용자 설정 유지). 다음 reset부터 */
   applyOrder(order: Order): void {
-    Object.assign(this.settings, order.building, { budgetScale: order.budgetScale });
+    Object.assign(this.settings, DEFAULT_BUILDING, order.building, {
+      budgetScale: order.budgetScale,
+      fragmentCap: order.fragmentCap,
+    });
   }
 
   /**
@@ -431,9 +435,9 @@ export class BuildingSite {
     const started = performance.now();
     this.loading.show('Generating building…');
 
-    const { quality, budgetScale, ...params } = this.settings;
-    const { members, footprint, height } = generateBuilding(params);
-    const counts = seedCountsForPreset(members, quality, budgetScale);
+    const { quality, budgetScale, fragmentCap, ...params } = this.settings;
+    const { members, footprint, height } = buildArchetype(params);
+    const counts = seedCountsForPreset(members, quality, budgetScale, fragmentCap);
     const rng = createRng(params.seed);
     const jobs = members.map((m, i) => ({
       box: m.box,
@@ -504,6 +508,7 @@ export class BuildingSite {
     this.burning = new BuildingFire(
       d,
       (i) => member(i).kind,
+      (i) => member(i).material,
       this.effects.fire,
       this.lights,
       createRng(params.seed + 1),

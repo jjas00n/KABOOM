@@ -2,7 +2,7 @@
 //   step   (물리 시간) 화재 틱 → 엣지 용량이 줄었으면 CollapseSolver에 알림
 //   update (렌더 프레임) 타는 조각 중 몇 개를 뽑아 불꽃·연기 방출, 그을음·불씨 색, 큰 화재 구역에 라이트
 import { Color, Vector3, type PointLight } from 'three';
-import { DURABILITY, FIRE } from '../config';
+import { DURABILITY, FIRE, type MaterialName } from '../config';
 import { FireSystem } from '../destruction/FireSystem';
 import type { DestructionSystem } from '../destruction/DestructionSystem';
 import type { Vec3Like } from '../fracture/polyhedron';
@@ -37,10 +37,11 @@ export class BuildingFire {
   private ticks = 0;
   private time = 0;
 
-  /** kind: 노드의 부재 종류 (연료·슬래브 판정), random: 연료 변주용 */
+  /** kind: 노드의 부재 종류 (연료·슬래브 판정), material: 노드 재질 (재질 연료·확산·약화), random: 연료 변주용 */
   constructor(
     private readonly destruction: DestructionSystem,
     kind: (node: number) => string,
+    material: (node: number) => MaterialName,
     private readonly particles: Fire,
     private readonly pool: LightPool,
     random: () => number,
@@ -51,9 +52,16 @@ export class BuildingFire {
     this.system = new FireSystem(
       graph,
       destruction.positions,
-      FireSystem.fuelFor(graph, kind, random),
+      FireSystem.fuelFor(graph, kind, random, material),
       slab,
     );
+    // office(콘크리트·유리만)는 재질 계수 없이 예전과 똑같이
+    let mixed = false;
+    for (let i = 0; i < graph.nodeCount && !mixed; i++) {
+      const m = material(i);
+      mixed = m !== 'concrete' && m !== 'glass';
+    }
+    if (mixed) this.system.materials = FireSystem.materialsFor(graph.nodeCount, material);
     this.painted = new Uint8Array(graph.nodeCount);
     const frags = destruction.fragments;
     this.system.isSettled = (i) => {

@@ -28,20 +28,22 @@ export function allocateSeeds(members: readonly Member[], targetFragments: numbe
   );
 }
 
-/** 품질 프리셋 목표 × 주문 예산 배율 (상한 ORDERS.maxFragments) */
-export function targetFragments(preset: QualityPreset, budgetScale = 1): number {
-  return Math.min(
-    Math.round(QUALITY_PRESETS[preset].targetFragments * budgetScale),
-    ORDERS.maxFragments,
-  );
+/** 품질 프리셋 목표 × 주문 예산 배율 (상한 cap, 기본 ORDERS.maxFragments) */
+export function targetFragments(
+  preset: QualityPreset,
+  budgetScale = 1,
+  cap: number = ORDERS.maxFragments,
+): number {
+  return Math.min(Math.round(QUALITY_PRESETS[preset].targetFragments * budgetScale), cap);
 }
 
 export function seedCountsForPreset(
   members: readonly Member[],
   preset: QualityPreset,
   budgetScale = 1,
+  cap: number = ORDERS.maxFragments,
 ): number[] {
-  return allocateSeeds(members, targetFragments(preset, budgetScale));
+  return allocateSeeds(members, targetFragments(preset, budgetScale, cap));
 }
 
 /**

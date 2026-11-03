@@ -1,16 +1,30 @@
 // 주문 게시판 (ORDER_BOARD): 의뢰 카드 3장 + 지갑·누적 통계 + 품질 선택. 스타일은 index.html의 .board
 import { QUALITY_PRESETS, type QualityPreset } from '../config';
 import type { CareerData } from '../orders/Career';
+import type { Archetype } from '../building/archetypes';
 import type { Order, OrderTier, OrderTrait } from '../orders/Order';
 import { formatMoney } from './format';
 import type { OrderThumbnails } from './OrderThumbnails';
 
-const TIER_LABEL: Record<OrderTier, string> = { small: 'Small', medium: 'Medium', large: 'Large' };
+const TIER_LABEL: Record<OrderTier, string> = {
+  tiny: 'Starter',
+  small: 'Small',
+  medium: 'Medium',
+  large: 'Large',
+};
 const TRAIT_LABEL: Record<OrderTrait, [string, string]> = {
   glassy: ['Glass-heavy', 'Shatters easily, but glass pays half'],
   slender: ['Tall & slender', 'Topples easily'],
   sprawling: ['Low & wide', 'Lots of fragments to break'],
   reinforced: ['Reinforced', 'Tough pieces, pays more'],
+  starter: ['Starter', 'Breaks with a pebble'],
+};
+/** 입문 건물: 재질 태그 + 한 줄 설명 (특징 대신) */
+const ARCHETYPE_LABEL: Record<Exclude<Archetype, 'office'>, [string, string, string]> = {
+  glassStatue: ['Crystal', 'Crystal statue', 'Thin legs, shatters in fire'],
+  brickHut: ['Brick', 'Brick hut', 'Weak mortar, shrugs off fire'],
+  woodShed: ['Wood', 'Wooden shed', 'Burns down in one fireball'],
+  sandcastle: ['Sand', 'Sandcastle', 'Crumbles at a touch'],
 };
 const QUALITY_LABEL: Record<QualityPreset, string> = { low: 'Low', medium: 'Medium', high: 'High' };
 const count = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
@@ -96,7 +110,8 @@ export class OrderBoard {
     img.src = this.thumbnails.get(order);
     const name = el('div', 'board-name', order.name);
     const client = el('div', 'board-client', `for ${order.client}`);
-    const [traitName, traitText] = TRAIT_LABEL[order.trait];
+    const tiny = order.archetype !== 'office' ? ARCHETYPE_LABEL[order.archetype] : null;
+    const [traitName, traitText] = tiny ? [tiny[0], tiny[2]] : TRAIT_LABEL[order.trait];
     const tags = el('div', 'board-tags');
     tags.append(
       el('span', `board-tag tier`, TIER_LABEL[order.tier]),
@@ -104,7 +119,7 @@ export class OrderBoard {
     );
     const b = order.building;
     const rows: [string, string][] = [
-      ['Size', `${b.floors} floors · ${b.baysX}×${b.baysZ} bays`],
+      ['Size', tiny ? tiny[1] : `${b.floors} floors · ${b.baysX}×${b.baysZ} bays`],
       ['Fragments', `~${count.format(order.estimatedFragments[quality])}`],
       [
         'Reward',

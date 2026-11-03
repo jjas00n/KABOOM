@@ -34,6 +34,15 @@ export const FRACTURE = {
     wallPanel: 40,
     parapet: 30,
     glass: 400,
+    // 7-4 입문 건물 (기초 = foundation 재사용: 얇은 받침, 앵커, 단가 0)
+    sculpture: 120, // 크리스털 동상: 조밀
+    brickBlock: 40, // 벽돌 블록 (블록당 2~4조각이 되게)
+    post: 40, // 나무 기둥
+    plank: 140, // 판자 (얇다)
+    roof: 12, // 지붕 (벽돌 박공·모래탑 고깔·나무 지붕 판자)
+    tower: 18, // 모래탑
+    rampart: 30, // 모래 성벽
+    merlon: 40, // 흉벽 톱니
   },
   adaptiveSeedRadius: 3, // 이 반경 안에서 시드 밀도가 올라간다
   adaptiveSeedMultiplier: 4, // 중심점에서의 밀도 배수 (반경 끝에서 1배로 선형 감소)
@@ -83,6 +92,76 @@ export const GLASS = {
   thickness: 0.03, // m (굴절 근사)
 } as const;
 
+/**
+ * 7-4 입문 건물 치수 (m) — building/archetypes/. 높이 1.5~4 m, 얇은 받침(foundation)만 앵커.
+ * 원점 = 건물 바닥 중심. 모양 변주는 건물 seed로 (vary 비율 안에서).
+ */
+export const TINY = {
+  vary: 0.08, // 치수 ± 비율
+  glassStatue: {
+    pedestal: [1.2, 0.5, 0.8] as const, // 석재 받침 (앵커) 폭·높이·깊이
+    legApothem: 0.09,
+    legSpacing: 0.18, // 다리 중심 x
+    legHeight: 0.8,
+    hips: [0.64, 0.2, 0.32] as const,
+    torsoHeight: 0.9,
+    torsoBottom: [0.3, 0.15] as const, // 반폭 x, z
+    torsoTop: [0.4, 0.2] as const,
+    shoulders: [1.2, 0.15, 0.4] as const,
+    armApothem: 0.07,
+    armX: 0.5,
+    armLength: 0.65,
+    neckApothem: 0.06,
+    neckHeight: 0.15,
+    headHeight: 0.35,
+    headBottom: [0.14, 0.12] as const,
+    headTop: [0.1, 0.09] as const,
+    crest: [0.2, 0.2, 0.18] as const, // 머리 위 박공 볏
+  },
+  brickHut: {
+    base: [3.4, 0.15, 2.8] as const, // 석재 기단 (앵커)
+    wall: 0.25, // 벽 두께
+    course: 0.25, // 블록 줄 높이
+    courses: 7,
+    block: 0.75, // 블록 길이 (러닝본드: 줄마다 반 블록 어긋남)
+    minPiece: 0.12, // 이보다 짧은 끝 조각은 옆 블록에 붙인다
+    door: [0.7, 1.25] as const, // 앞 벽 문 폭·높이 (기단 위부터)
+    window: [1, 0.5, 0.75] as const, // 뒤 벽 창 폭·높이·창대 높이
+    roofHeight: 0.9,
+  },
+  woodShed: {
+    base: [2.6, 0.12, 2] as const, // 석재 받침 (앵커)
+    post: 0.14,
+    postX: 1.1,
+    postZ: 0.85,
+    board: 0.04, // 벽 판자 두께
+    boardRow: 0.2, // 판자 폭 (줄 높이)
+    plate: 0.14, // 위 깔도리 두께 (높이)
+    roofFront: 2, // 지붕 아랫면 높이: 앞(z = -postZ 바깥) / 뒤
+    roofBack: 1.6,
+    roofOverhang: 0.25,
+    roofPlank: 0.3, // 지붕 판자 폭
+    roofThickness: 0.05,
+    door: [0.8, 1.6] as const,
+    grainStretch: 5, // 판자 결 방향 칸 배수
+  },
+  sandcastle: {
+    base: [3.2, 0.1, 3.2] as const, // 모래 받침 (앵커)
+    towerSides: 8, // 평평한 면이 ±x, ±z를 향해야 성벽이 붙는다 (4의 배수)
+    towerApothem: 0.35,
+    towerOffset: 1.1, // 탑 중심 |x|, |z|
+    towerHeight: 1.2,
+    capHeight: 0.45, // 고깔 (사각뿔대)
+    capTop: 0.02,
+    wallThickness: 0.26,
+    wallHeight: 0.75,
+    merlon: [0.16, 0.15] as const, // 흉벽 톱니 폭·높이
+    merlonGap: 0.16,
+    keepApothem: 0.5,
+    keepHeight: 1.5,
+  },
+} as const;
+
 /** 조각 재질 (Fragment.material id 순서와 같다: 0 concrete, 1 glass, ...) */
 export const MATERIAL_NAMES = [
   'concrete',
@@ -108,9 +187,14 @@ export interface MaterialSpec {
   density: number; // kg/m^3
   friction: number;
   edgeFactor: number; // 엣지 강도 = 면적 × strengthPerArea × min(양쪽 계수)
+  jointFactor: number; // 부재 사이 이음매 배수 (× STRUCTURE.jointFactor, min(양쪽)). 벽돌 모르타르 등
   pricePerKg: number; // $/kg (부재 종류 단가가 우선, ECONOMY.kindPricePerKg)
   fireFuel: number; // FIRE.fuel에 없는 부재 종류의 연료 (초)
   fireSpread: number; // 이 재질 조각으로 번지는 열 배수
+  /** 타는 동안 붙은 엣지 약화 속도 배수 (× FIRE.weakenRate) */
+  fireWeaken: number;
+  /** 약화 하한 (원래 용량 대비). 없으면 FIRE.minStrength */
+  fireMinStrength?: number;
   /** 판재(유리·크리스털): 반투명 배치 1개, 화염 폭발 반경 안 전부 파손, 손상 자세 계산에서 이웃 무시 */
   pane: boolean;
   exterior: SurfaceSpec;
@@ -130,9 +214,11 @@ export const MATERIALS: Readonly<Record<MaterialName, MaterialSpec>> = {
     density: CONCRETE.density,
     friction: CONCRETE.friction,
     edgeFactor: 1,
+    jointFactor: 1,
     pricePerKg: 0.004,
     fireFuel: 0,
     fireSpread: 1,
+    fireWeaken: 1,
     pane: false,
     exterior: {
       texture: 'concrete-exterior',
@@ -157,9 +243,11 @@ export const MATERIALS: Readonly<Record<MaterialName, MaterialSpec>> = {
     density: GLASS.density,
     friction: GLASS.friction,
     edgeFactor: 0.1,
+    jointFactor: 1,
     pricePerKg: 0.08, // 얇아서 가볍지만 비싸다
     fireFuel: 0,
     fireSpread: 1,
+    fireWeaken: 1,
     pane: true,
     exterior: {
       texture: null,
@@ -184,9 +272,11 @@ export const MATERIALS: Readonly<Record<MaterialName, MaterialSpec>> = {
     density: 1900,
     friction: 0.8,
     edgeFactor: 0.35,
+    jointFactor: 0.35,
     pricePerKg: 0.006,
     fireFuel: 0,
     fireSpread: 0.3,
+    fireWeaken: 0.5,
     pane: false,
     exterior: {
       texture: 'brick',
@@ -205,9 +295,12 @@ export const MATERIALS: Readonly<Record<MaterialName, MaterialSpec>> = {
     density: 550,
     friction: 0.6,
     edgeFactor: 0.25,
+    jointFactor: 0.6,
     pricePerKg: 0.03,
     fireFuel: 18,
     fireSpread: 3,
+    fireWeaken: 5,
+    fireMinStrength: 0.02, // 다 타면 거의 안 버틴다
     pane: false,
     exterior: {
       texture: 'wood',
@@ -226,9 +319,11 @@ export const MATERIALS: Readonly<Record<MaterialName, MaterialSpec>> = {
     density: 2600,
     friction: 0.3,
     edgeFactor: 0.08,
+    jointFactor: 1,
     pricePerKg: 0.05,
     fireFuel: 0,
     fireSpread: 0,
+    fireWeaken: 1,
     pane: true,
     exterior: { texture: null, color: 0xa8dff0, tint: 0xffffff, brightness: 1, roughness: 0.04 },
     interior: { texture: null, color: 0xa8dff0, tint: 0xffffff, brightness: 1, roughness: 0.04 },
@@ -241,9 +336,11 @@ export const MATERIALS: Readonly<Record<MaterialName, MaterialSpec>> = {
     density: 2500,
     friction: 0.9,
     edgeFactor: 1,
+    jointFactor: 1,
     pricePerKg: 0.002,
     fireFuel: 0,
     fireSpread: 0,
+    fireWeaken: 0.3,
     pane: false,
     exterior: {
       texture: 'stone',
@@ -262,9 +359,11 @@ export const MATERIALS: Readonly<Record<MaterialName, MaterialSpec>> = {
     density: 1600,
     friction: 0.95,
     edgeFactor: 0.12,
+    jointFactor: 0.6,
     pricePerKg: 0.004,
     fireFuel: 0,
     fireSpread: 0,
+    fireWeaken: 0.5,
     pane: false,
     exterior: { texture: 'sand', color: 0xd8bf8a, tint: 0xffffff, brightness: 1.1, roughness: 1 },
     interior: { texture: 'sand', color: 0xc4a670, tint: 0xf2dcb0, brightness: 1, roughness: 1 },
@@ -721,6 +820,15 @@ export const ORDERS = {
   cardsPerBoard: 3,
   // 등급: 크면 총액은 크지만 시간당 효율은 낮다. 범위는 [최소, 최대] (정수)
   tiers: {
+    // 입문 (7-4): 돌멩이로도 부서지는 작은 건물. 총액은 작고 완료 보너스 비중이 크다
+    tiny: {
+      floors: [1, 1] as Range, // (office 파라미터, 입문 건물은 안 쓴다)
+      baysX: [1, 1] as Range,
+      baysZ: [1, 1] as Range,
+      budgetScale: 0.1, // Low 150 / Medium 400 / High 800 → maxFragments로 600
+      rewardMultiplier: 1,
+      completionBonus: 0.6,
+    },
     small: {
       floors: [2, 4] as Range,
       baysX: [2, 3] as Range,
@@ -754,6 +862,23 @@ export const ORDERS = {
   reinforced: { durabilityBonus: 1, rewardScale: 1.25 }, // 보강: 단단하지만 보상이 크다
   maxBaysZ: 5, // 대포 언덕(z = +46부터)과 마법사 바위에 닿지 않게
   maxFragments: 10000, // 품질 × 예산 배율의 상한 (High + 대형에서도)
+  tinyMaxFragments: 600, // 입문 건물 조각 상한
+  tutorialBuildings: 3, // 완파한 건물이 이 수보다 적으면 입문(tiny) 주문만 나온다
+  // 입문 주문 (가상의 의뢰인·이름, 실존 금지)
+  tinyClients: [
+    'Pebble Cove Fair',
+    'Mrs. Albery',
+    'Thistledown Parish',
+    'The Wren Street Scouts',
+    'Gorse Hill Allotments',
+    'Marrowby Beach Club',
+  ],
+  tinyNames: {
+    glassStatue: ['Crystal Sentinel', 'Glass Pilgrim', 'Frost Herald'],
+    brickHut: ['Garden Outhouse', 'Kiln Hut', 'Pump House'],
+    woodShed: ['Tool Shed', 'Woodpile Shack', 'Bait Hut'],
+    sandcastle: ['Sandcastle', 'Tide Fort', 'Dune Keep'],
+  } as Record<string, readonly string[]>,
   thumbnail: { width: 256, height: 160, cacheSize: 9 },
   abandonConfirmSec: 3, // '의뢰 포기'를 이 시간 안에 한 번 더 눌러야 포기
   // 가상의 의뢰인·건물명 (실존 회사·브랜드 금지)
@@ -946,6 +1071,10 @@ export const CAMERA = {
   spectateRadius: 30,
   spectateHeight: 13,
   spectateSpeed: 0.22, // rad/s
+  // 작은 건물(7-4 입문)은 IDLE·관람 거리를 건물 크기에 맞춰 줄인다:
+  // 배율 = clamp(max(높이, 외곽 대각선) / framingRef, framingMin, 1)
+  framingRef: 26, // m (office 기본 크기 즈음)
+  framingMin: 0.2,
   // 흔들림 (camera/CameraShake.ts)
   shakeDecay: 1.4, // trauma 감소 /s
   shakeMaxOffset: 0.7, // m

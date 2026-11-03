@@ -9,9 +9,11 @@
 //   - 약화: 타는 조각에 붙은 엣지의 용량(capacity)을 깎는다 (원래 값의 minStrength까지)
 //     → CollapseSolver가 과부하 엣지로 보고 서서히 끊는다 = 불이 오래 붙은 층이 늦게 주저앉는다
 //   - 구조에서 떨어진 조각은 퍼뜨리지 않고 계속 탄다. 굳으면 settledBurnRate배로 빨리 꺼진다
+//   - 재질(7-4): 받는 쪽 재질이 확산 배수(fireSpread), 타는 쪽 재질이 약화 속도·하한(fireWeaken·fireMinStrength)
+//     을 정한다 (materials). 없으면 전부 1 / FIRE 값 (office)
 // 계산은 tickSec마다 묶어서 한다 (매 물리 스텝마다 하지 않는다).
 import type { StructureGraph } from '../building/StructureGraph';
-import { FIRE } from '../config';
+import { FIRE, MATERIALS, type MaterialName } from '../config';
 import type { Vec3Like } from '../fracture/polyhedron';
 
 export interface FireSettings {
@@ -42,6 +44,16 @@ export interface FireTickResult {
 /** 공유 면적 비율 상한 (큰 면 하나가 확산을 독차지하지 않게) */
 const MAX_AREA_WEIGHT = 1.5;
 
+/** 노드별 재질 화재 계수 */
+export interface FireMaterials {
+  /** 이 노드로 번지는 열 배수 */
+  spread: Float32Array;
+  /** 이 노드가 탈 때 붙은 엣지 약화 속도 배수 */
+  weaken: Float32Array;
+  /** 이 노드가 탈 때 약화 하한 (원래 용량 대비) */
+  floor: Float32Array;
+}
+
 export class FireSystem {
   readonly heat: Float32Array;
   readonly fuel: Float32Array;
@@ -51,6 +63,8 @@ export class FireSystem {
   spreadMultiplier: number = FIRE.spreadMultiplier;
   /** 굳은(정지한) 떨어진 조각인지 — 빨리 꺼진다. 없으면 아무것도 안 굳은 것으로 */
   isSettled: ((node: number) => boolean) | null = null;
+  /** 재질별 계수 (없으면 확산·약화 배수 1, 하한 minStrength) */
+  materials: FireMaterials | null = null;
 
   private readonly settings: FireSettings;
   /** 화재 전 엣지 용량 (약화 하한 기준) */
@@ -87,12 +101,14 @@ export class FireSystem {
     graph: StructureGraph,
     kind: (node: number) => string,
     random: () => number,
+    material: (node: number) => MaterialName = () => 'concrete',
   ): Float32Array {
     const n = graph.nodeCount;
     const fuel = new Float32Array(n);
     const table = FIRE.fuel;
     for (let i = 0; i < n; i++) {
-      let f = table[kind(i)] ?? 0;
+      // 부재 종류 표가 우선 (office), 없으면 재질 연료 (나무 = 많다)
+      let f = table[kind(i)] ?? MATERIALS[material(i)].fireFuel;
       if (kind(i) === 'wallPanel') {
         for (let k = graph.incidentStart[i]!; k < graph.incidentStart[i + 1]!; k++) {
           if (kind(graph.other(graph.incident[k]!, i)) === 'glass') {
@@ -224,16 +240,37 @@ export class FireSystem {
             : s.rateSide;
       if (this.slab[j] && !this.slab[i]) rate *= s.slabFactor;
       const w = Math.min(g.area[e]! / s.areaRef, MAX_AREA_WEIGHT);
+      const m = this.materials;
+      if (m) rate *= m.spread[j]!;
       if (!this.burning[j])
         this.heat[j] = Math.min(1, this.heat[j]! + rate * w * this.spreadMultiplier * h);
 
-      const floor = this.baseCapacity[e]! * s.minStrength;
+      const floor = this.baseCapacity[e]! * (m ? m.floor[i]! : s.minStrength);
+      const weaken = s.weakenRate * (m ? m.weaken[i]! : 1);
       const cap = g.capacity[e]!;
       if (cap > floor) {
-        g.capacity[e] = Math.max(floor, cap - this.baseCapacity[e]! * s.weakenRate * h);
+        g.capacity[e] = Math.max(floor, cap - this.baseCapacity[e]! * weaken * h);
         weakened = true;
       }
     }
     return weakened;
+  }
+
+  /** 재질 화재 계수 (노드별 재질) */
+  static materialsFor(
+    nodeCount: number,
+    material: (node: number) => MaterialName,
+    minStrength: number = FIRE.minStrength,
+  ): FireMaterials {
+    const spread = new Float32Array(nodeCount);
+    const weaken = new Float32Array(nodeCount);
+    const floor = new Float32Array(nodeCount);
+    for (let i = 0; i < nodeCount; i++) {
+      const m = MATERIALS[material(i)];
+      spread[i] = m.fireSpread;
+      weaken[i] = m.fireWeaken;
+      floor[i] = m.fireMinStrength ?? minStrength;
+    }
+    return { spread, weaken, floor };
   }
 }

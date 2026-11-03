@@ -6,6 +6,7 @@
 //   |<--- 기둥 --->|
 // 층 k: 기둥은 아래 슬래브(또는 기초) 윗면 ~ 이 층 슬래브 아랫면, 보는 슬래브 바로 아래.
 import { BUILDING } from '../config';
+import type { Archetype } from './archetypes';
 import type { Aabb } from '../fracture/polyhedron';
 import { box, type Member } from './Member';
 import { column } from './members/Column';
@@ -14,6 +15,8 @@ import { facadeFrame, wallPanel, windowOpening } from './members/WallPanel';
 import { windowGlass } from './members/Window';
 
 export interface BuildingParams {
+  /** 건물 종류 (없으면 office). office 외에는 아래 office 파라미터를 안 쓴다 (seed만) */
+  archetype?: Archetype;
   floors: number;
   baysX: number;
   baysZ: number;

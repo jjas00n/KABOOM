@@ -147,7 +147,12 @@ export class StructureGraph {
         if (j <= i) return; // 이웃 관계는 대칭이라 한쪽에서만
         const g = frags[j]!;
         const area = f.neighborAreas[k]!;
-        const joint = f.member === g.member ? 1 : STRUCTURE.jointFactor;
+        // 부재 사이 이음매: 재질 이음 배수(벽돌 모르타르 등)의 작은 쪽까지 곱한다
+        const joint =
+          f.member === g.member
+            ? 1
+            : STRUCTURE.jointFactor *
+              Math.min(materialOf(f).jointFactor, materialOf(g).jointFactor);
         const capacity = area * STRUCTURE.strengthPerArea * Math.min(factor(f), factor(g)) * joint;
         const a = f.centroid;
         const b = g.centroid;

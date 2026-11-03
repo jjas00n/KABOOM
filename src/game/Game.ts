@@ -48,6 +48,7 @@ import { MoneyPopups } from '../fx/MoneyPopups';
 import { Career } from '../orders/Career';
 import type { Order } from '../orders/Order';
 import { generateBoard } from '../orders/OrderGenerator';
+import { unlockedTiersFor } from '../orders/unlock';
 import { defaultSave, type SaveData } from '../save/SaveData';
 import type { SaveStore } from '../save/SaveStore';
 import { EconomyHud } from '../ui/EconomyHud';
@@ -107,6 +108,8 @@ export class Game {
   private readonly postfx: PostFX;
   private readonly orbit: OrbitControls;
   private readonly orbitCam: SpectateCam;
+  /** 카메라 거리 배율 (작은 건물은 가까이, office = 1) */
+  private framing = 1;
   private readonly aimCam: AimCam;
   private readonly chaseCam = new ChaseCam();
   private cutscene: CutsceneCam | null = null;
@@ -395,7 +398,11 @@ export class Game {
   }
 
   private showBoard(): void {
-    if (this.board.length === 0) this.board = generateBoard(this.saveData.boardSeed);
+    if (this.board.length === 0) {
+      this.board = generateBoard(this.saveData.boardSeed, {
+        unlockedTiers: unlockedTiersFor(this.career.data),
+      });
+    }
     this.orderBoard.show({
       orders: this.board,
       quality: this.site.settings.quality,
@@ -441,8 +448,8 @@ export class Game {
       this.orbit.enabled = true;
       const fire = this.fireSpectate ? this.site.fire : null;
       this.orbitCam.start(this.impactPoint, this.rig.camera.position, {
-        radius: CAMERA.spectateRadius,
-        height: CAMERA.spectateHeight,
+        radius: CAMERA.spectateRadius * this.framing,
+        height: CAMERA.spectateHeight * this.framing,
         speed: CAMERA.spectateSpeed,
         // 화재: 불이 번지는 걸 보도록 더 오래, 불 중심을 따라가며 천천히 줌아웃
         autoSec: fire ? CAMERA.spectateAutoSec * 2.5 : CAMERA.spectateAutoSec,
@@ -475,8 +482,8 @@ export class Game {
   private enterIdle(): void {
     this.orbit.enabled = true;
     this.orbitCam.start(this.buildingCenter, this.rig.camera.position, {
-      radius: CAMERA.idleRadius,
-      height: CAMERA.idleHeight - this.buildingCenter.y,
+      radius: CAMERA.idleRadius * this.framing,
+      height: CAMERA.idleHeight * this.framing - this.buildingCenter.y,
       speed: CAMERA.idleSpeed,
       autoSec: Infinity,
     });
@@ -779,6 +786,7 @@ export class Game {
     this.finale.reset();
     this.site.teardown();
     this.buildingCenter.set(0, 0, 0);
+    this.framing = 1;
   }
 
   /** LOADING: 건물 생성. 끝나면 충돌 훅 연결 + 장부 + 카메라 중심 갱신 → IDLE (실패하면 게시판) */
@@ -798,6 +806,11 @@ export class Game {
           height * 0.45,
           (footprint.min.z + footprint.max.z) / 2,
         );
+        const size = Math.max(
+          height,
+          Math.hypot(footprint.max.x - footprint.min.x, footprint.max.z - footprint.min.z),
+        );
+        this.framing = Math.min(1, Math.max(CAMERA.framingMin, size / CAMERA.framingRef));
       }
       this.site.destruction!.onCollisionStarted = (a, b) => this.onCollision(a, b);
       this.attachEconomy();

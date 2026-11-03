@@ -9,10 +9,21 @@ export interface CareerData {
   totalFragments: number;
   /** 수익이 가장 컸던 완파 건물 */
   best: { name: string; total: number } | null;
+  /**
+   * 입문(tiny) 단계를 건너뛰었는지 (7-4 이전 세이브: 이미 office를 하던 플레이어는 계속 office).
+   * 새 게임은 false → 완파 ORDERS.tutorialBuildings채까지 입문 주문만 (orders/unlock.ts)
+   */
+  starterComplete: boolean;
 }
 
 export function emptyCareer(): CareerData {
-  return { buildingsDemolished: 0, ordersAbandoned: 0, totalFragments: 0, best: null };
+  return {
+    buildingsDemolished: 0,
+    ordersAbandoned: 0,
+    totalFragments: 0,
+    best: null,
+    starterComplete: false,
+  };
 }
 
 export class Career {
