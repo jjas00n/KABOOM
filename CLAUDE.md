@@ -19,12 +19,22 @@
 ## 그래픽 방향 (확정): 사실적 콘크리트/유리
 - PBR 재질: 콘크리트 외벽, 노출된 **단면은 별도 재질**(거칠고 어두운 내부 콘크리트), 유리창은 `MeshPhysicalMaterial`(transmission/roughness).
 - 텍스처는 CC0만 사용 (ambientCG / Poly Haven). `public/textures/` 에 1K 해상도로 저장, 출처를 `public/textures/CREDITS.md`에 기록.
+- **재질 표**(`config.MATERIALS`, 7-4): concrete / glass / brick / wood / crystal / stone / sand.
+  - 밀도·마찰·엣지 계수·이음 계수·단가·화재(연료·확산·약화)·판재 여부·외면/단면 표면·먼지/파편 색.
+  - 재질은 `Member.material`이 정한다 (부재 종류로 추론하지 않는다). 조각은 `Fragment.material` id (= `MATERIAL_NAMES` 순서).
+  - 판재(glass·crystal): 반투명 배치 1개, 화염 폭발 반경 안 전부 파손.
+  - concrete·glass 외 텍스처는 그 재질을 쓰는 건물이 처음 생길 때 받는다 (`Assets.surface`).
 - 그림자: 방향광 1개 + CSM 또는 단일 shadow map(2048), HDRI 환경맵(Poly Haven, 1K).
 - 이펙트: 먼지 구름(소프트 파티클), 작은 파편(GPU 인스턴싱), 카메라 흔들림, 충돌 순간 짧은 슬로모션(hit-stop).
 
 ## 핵심 설계 원칙 — "산산조각"이 최우선
 1. **사전 분할(pre-fracture)**: 건물은 처음부터 수천 개의 볼록(convex) 조각으로 생성된다. 실시간 분할은 하지 않는다(성능).
 2. **절차적 생성**: 건물은 코드로 만든다(블렌더 X). 층/기둥/슬래브/외벽 패널/창문 → 각 부재를 **3D 보로노이**로 분할.
+   - 건물 종류 = **아키타입**(`building/archetypes/`): office(기존 사무실) + 7-4 입문 건물
+     glassStatue / brickHut / woodShed / sandcastle. `buildArchetype(params)` 하나로 만든다.
+   - 부재 모양: 박스, 또는 **볼록 부재**(박스를 반공간으로 자른 다면체: n각 기둥·테이퍼·박공·경사판, `building/shapes.ts`).
+     박스끼리는 축 정렬 접촉, 볼록 부재가 낀 쌍은 같은 평면 반대 법선 면으로 이어진다 (`contacts.findPlaneContacts`).
+   - 나뭇결(`Member.grain`): 결 축을 줄인 공간에서 보로노이 → 판자가 길게 쪼개진다.
    - 조각 크기는 부재별로 다르게: 외벽 패널은 잘게(파편감), 기둥·슬래브는 크게(구조감).
    - 충돌 지점 근처를 더 잘게 쪼개는 **적응형 시드 밀도** 옵션을 둔다.
 3. **조각 = 볼록 다면체** → Rapier `convexHull` 콜라이더로 1:1 대응.
@@ -51,13 +61,16 @@ IMPACT·SPECTATE ─(파괴율 ≥ 85%, 건물당 1회)→ FINALE(완파 피날�
 ```
 - **주문 루프**(`src/orders/`, Phase 7-3): 게시판 seed 하나로 카드 3장(`OrderGenerator`, 결정적).
   - 등급(소/중/대) = 규모·조각 예산·보상 배율·완료 보너스. `unlockedTiers`가 Phase 10 해금 자리.
+  - **tiny(입문, 7-4)**: 입문 건물 카드 (조각 상한 600, 보상 작고 완료 보너스 큼, 서로 다른 아키타입).
+    `orders/unlock.ts`: 완파 `ORDERS.tutorialBuildings`채 미만이면 tiny만, 그 뒤 office 등급.
+    7-4 이전 세이브는 `career.starterComplete`로 건너뛴다.
   - 특징(유리 많음/고층 슬림/저층 넓음/보강) = 모양·전략. 주문 보상 조건은 `Economy.setOrder`로 들어간다.
   - 의뢰를 받는 순간 게시판 seed가 다음으로 넘어가고 저장된다 (의뢰 도중 새로고침 = 포기).
   - ORDER_BOARD에 들어갈 때 이전 건물을 **전부 해제**한다 (`Game.teardownBuilding` → `BuildingSite.teardown`).
     dev 디버그 GUI 'Memory' → 'Soak 10 orders'로 바디·콜라이더·geometry·texture 수가 첫 건물과 같은지 본다.
   - HUD에 건물 리셋 버튼은 없다 (같은 의뢰를 다시 부숴 파편 수익을 반복하지 않게). 재생성은 디버그 전용.
 - **저장**(`src/save/`): localStorage, 버전 있는 스키마(`SaveData`) + 마이그레이션 체인(`migrations.ts`).
-  - 저장 내용: 지갑, 누적 통계(`orders/Career`), 게시판 seed, 품질.
+  - 저장 내용: 지갑, 누적 통계(`orders/Career`, 입문 완료 여부 포함), 게시판 seed, 품질. 스키마 v2 (7-4).
   - 어떤 실패에도 예외 없이 새 게임으로 시작한다. 틀린 필드만 기본값으로 바꾼다.
   - 저장 시점: 의뢰 수락·완료·포기, 설정 변경, 탭 숨김.
 - **완파 피날레**(`game/Finale.ts` 정리·정산, `game/FinaleDirector.ts` 연출, `economy/Completion.ts` 1회 판정):
@@ -103,13 +116,14 @@ src/
   main.ts
   core/        Renderer, Loop(고정 timestep 물리 60Hz + 렌더 보간), Assets
   physics/     PhysicsWorld(Rapier 래퍼, teleport), 충돌 이벤트·충돌 그룹, ColliderOverlay(디버그 콜라이더 표시)
-  fracture/    voronoi.ts(반공간 클리핑), Fragment.ts, seeds.ts
-  building/    BuildingGenerator.ts, members(Column/Slab/WallPanel/Window), StructureGraph.ts
+  fracture/    voronoi.ts(반공간 클리핑), Fragment.ts(재질 id), seeds.ts, contacts.ts(부재 간 접촉), pipeline.ts
+  building/    BuildingGenerator.ts(office), archetypes/(레지스트리 + 입문 건물 4종), shapes.ts(볼록 부재),
+               members(Column/Slab/WallPanel/Window), StructureGraph.ts
   destruction/ Explosion.ts(임펄스·BlastShape), CollapseSolver.ts(지지 BFS), DebrisManager.ts(정리/수명),
                FireSystem.ts(화재 확산·연소·약화, 순수 로직), DamageModel.ts(조각 손상도·자세·느슨 판정),
                DamageView.ts(손상 자세·텍스처 적용), Invariants.ts(불변 조건), Durability.ts(조각 내구도)
   economy/     Wallet.ts, Modifiers.ts, FragmentValue.ts, BuildingLedger.ts, Economy.ts, Completion.ts (순수 로직)
-  orders/      Order.ts, OrderGenerator.ts(게시판 seed → 카드 3장), Career.ts(누적 통계) (순수 로직)
+  orders/      Order.ts, OrderGenerator.ts(게시판 seed → 카드 3장), Career.ts(누적 통계), unlock.ts(열린 등급) (순수 로직)
   save/        SaveData.ts(스키마·버전), migrations.ts, SaveStore.ts(localStorage, 실패해도 새 게임)
   game/        StateMachine.ts, Launcher.ts(발사대 인터페이스), Cannon.ts, Wizard.ts, fireball.ts,
                Projectile.ts(ProjectileSpec), BuildingFire.ts(화재 ↔ 파티클·색·라이트 연결),
@@ -127,7 +141,8 @@ tests/         vitest 단위 테스트
 ## 코딩 규칙
 - 매직 넘버 금지 → `src/config.ts`에 튜닝 상수 모아두기(포탄 질량, 속도, 폭발 반경, 조각 수 등).
 - 무거운 분할 계산은 **Web Worker**에서 (`fracture.worker.ts`), 메인 스레드는 로딩 진행률 표시.
-- 같은 형태 반복이 아니므로 조각 메시는 `BatchedMesh` 사용, 재질은 외벽/단면/유리 3종 이하로 유지(드로우콜 최소화).
+- 같은 형태 반복이 아니므로 조각 메시는 `BatchedMesh` 사용, **건물당 재질 4종 이하**로 유지(드로우콜 최소화).
+  - 불투명 재질 하나 = 외면·단면 2개, 판재(유리·크리스털) = 1개. 건물이 쓰는 재질만 배치가 생긴다 (office 3, 입문 2~4).
 - 매 프레임 `new` 금지(Vector3 등 재사용 스크래치 객체 사용).
 - 각 단계 끝에: `npm run build` 통과, `npm test` 통과, 콘솔 에러 0, FPS 확인 후 커밋.
 - 커밋 메시지: `feat(fracture): ...`, `fix(physics): ...` 형식. 단계(Phase)마다 브랜치 → PR.
